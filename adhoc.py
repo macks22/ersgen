@@ -204,12 +204,11 @@ def adhoc_gen(n, m, nterms):
         # Update alevel from student chrs.
         students['alevel'] = bin_alevel(students['schrs'])
 
-        # TODO: Update cum_cgpa.
+        # Update cum_cgpa.
         # The course cumulative GPA is the grade of all students who have taken
         # the course normalized using the number of enrollments historically.
-        term_grade_sum = _dyads.groupby('cid')['grade'].sum()
-        term_enrollments = _dyads.groupby('cid')['term_enrolled'].first()
-        _dyads['term_cgpa'] = term_grade_sum / term_enrollments
+        term_grade_sum = _dyads.groupby('cid')['grade'].transform('sum')
+        _dyads['term_cgpa'] = term_grade_sum / _dyads['term_enrolled']
 
         cgpa_sums = (
             courses['cum_cgpa'] * courses['total_enrolled'] +
@@ -217,8 +216,9 @@ def adhoc_gen(n, m, nterms):
         )
         courses['total_enrolled'] = (
             courses['total_enrolled'] +
-            term_enrollments.reindex(courses.index)\
-                            .fillna(0).sort_index()
+            _dyads.groupby('cid')['term_enrolled'].first()\
+                    .reindex(courses.index)\
+                    .fillna(0).sort_index()
         )
         courses['cum_cgpa'] = cgpa_sums / courses['total_enrolled']
 
@@ -259,4 +259,7 @@ if __name__ == "__main__":
 
     data = adhoc_gen(args.nstudents, args.ncourses, args.nterms)
     if args.output:
-        data.to_csv('adhoc-dat-%s.csv' % tsnow(), index=False)
+        fname = 'data-n%d-m%d-t%d-d%d-%s.csv' % (
+            args.nstudents, args.ncourses, args.nterms, len(data), tsnow())
+        logging.info('writing data to: %s' % fname)
+        data.to_csv(fname, index=False)
