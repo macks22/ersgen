@@ -76,9 +76,17 @@ if __name__ == "__main__":
 
     # Get dimensions of training data.
     nd, nf = train_x.shape
-    n = len(train_x[uid].unique())
-    m = len(train_x[iid].unique())
     l = args.nmodels
+
+    # Map user ids to bias indices.
+    uids = data[uid].unique()
+    n = len(uids)
+    uid_map = dict(zip(uids, range(n)))
+
+    # Map item ids to bias indices.
+    iids = data[iid].unique()
+    m = len(iids)
+    iid_map = dict(zip(iids, range(m)))
 
     # train = pd.read_csv(args.train)
     # train_y = train[args.target]
@@ -105,50 +113,79 @@ if __name__ == "__main__":
     g_hat = b_s + b_c + p_s.T.dot(W).dot(f_sc)  # predicted grade
     """
     randn = lambda dim: np.random.normal(0, 0.1, dim)
-    b_s = theano.shared(value=randn(1), name='b_s', borrow=True)
-    b_c = theano.shared(value=randn(1), name='b_c', borrow=True)
+    b_s = theano.shared(value=randn(n), name='b_s', borrow=True)
+    b_c = theano.shared(value=randn(m), name='b_c', borrow=True)
     p_s = theano.shared(value=randn((l, 1)), name='p_s', borrow=True)
+    p_s_zeros = theano.shared(value=np.zeros((l, 1)))
     W = theano.shared(value=randn((l, nf)), name='W', borrow=True)
+    W_zeros = theano.shared(value=np.zeros((l, nf)))
     f_sc = T.dvector('f_sc')  # (nf, 1)
 
-    print '%s: %.4f' % (b_s.name, b_s.get_value()[0])
-    print '%s: %.4f' % (b_c.name, b_c.get_value()[0])
-    print '%s:\n%s' % (p_s.name, str(p_s.get_value()))
-    print '%s:\n%s' % (W.name, str(W.get_value()))
+    def print_shared():
+        print '%s:\n%s' % (b_s.name, str(b_s.get_value()))
+        print '%s:\n%s' % (b_c.name, str(b_c.get_value()))
+        print '%s:\n%s' % (p_s.name, str(p_s.get_value()))
+        print '%s:\n%s' % (W.name, str(W.get_value()))
 
-    g_hat = b_s + b_c + p_s.T.dot(W).dot(f_sc)
+    print_shared()
+
+    _s = T.lscalar('s')
+    _c = T.lscalar('c')
+
+    g_hat = b_s[_s] + b_c[_c] + p_s.T.dot(W).dot(f_sc)
     g = T.scalar('g')
     err = 0.5 * ((g_hat - g) ** 2)  # not sure if this is correct for RMSE
     reg = args.lambda_ * ((p_s ** 2).sum() + (W ** 2).sum())
     loss = (err + reg).sum()  # the sum just pulls out the single value
 
-    to_update = [b_s, b_c, W, p_s]
+    to_update = [b_s, b_c, p_s, W]
     gradients = dict(zip([v.name for v in to_update], T.grad(loss, to_update)))
     updates = [(v, v - args.lrate * gradients[v.name]) for v in to_update]
-    # updates[-1] = (p_s, (p_s - args.lrate * gradients[p_s.name]) / p_s.sum())
+    inputs = [f_sc, g, _s, _c]
     train_P = theano.function(
-        inputs=[f_sc, g], outputs=loss, name='train_P',
-        updates=[(p_s, (p_s - args.lrate * gradients[p_s.name]) / p_s.sum())])
-    train_B = theano.function(
-        inputs=[f_sc, g], outputs=loss, name='train_B',
-        updates=[(b_s, b_s - args.lrate * gradients[b_s.name]),
-                 (b_c, b_c - args.lrate * gradients[b_c.name])])
+        inputs=inputs, outputs=loss, name='train_P',
+        updates=[
+            (p_s,
+             T.maximum(
+                 p_s_zeros,
+                 (p_s - args.lrate * gradients[p_s.name]) / p_s.sum()))
+        ])
     train_W = theano.function(
-        inputs=[f_sc, g], outputs=loss, name='train_W',
-        updates=[(W, W - args.lrate * gradients[W.name])])
+        inputs=inputs, outputs=loss, name='train_W',
+        updates=[
+            (W, T.maximum(W_zeros, W - args.lrate * gradients[W.name]))
+        ])
+    train_B = theano.function(
+        inputs=inputs, outputs=loss, name='train_B',
+        updates=[
+            (b_s,
+             T.set_subtensor(
+                  b_s[_s],
+                  T.largest(
+                      0, b_s[_s] - args.lrate * gradients[b_s.name][_s]))),
+            (b_c,
+             T.set_subtensor(
+                  b_c[_c],
+                  T.largest(
+                      0, b_c[_c] - args.lrate * gradients[b_c.name][_c])))
+        ])
 
     for it in range(args.iters):
         for train_model in [train_P, train_B, train_W]:
             for idx in np.random.permutation(train_x.index):
-                train_model(train_x.ix[idx], train_y.ix[idx])
+                x = train_x.ix[idx]
+                train_model(x, train_y.ix[idx],
+                            uid_map[x['sid']], iid_map[x['cid']])
 
-        print '%s: %.4f' % (b_s.name, b_s.get_value()[0])
-        print '%s: %.4f' % (b_c.name, b_c.get_value()[0])
-        print '%s:\n%s' % (p_s.name, str(p_s.get_value()))
-        print '%s:\n%s' % (W.name, str(W.get_value()))
+        print_shared()
 
-    predict = theano.function([f_sc], g_hat)
-    predictions = np.array([predict(test_x.ix[idx]) for idx in test_x.index])
+    predict = theano.function([f_sc, _s, _c], g_hat)
+    predictions = np.array([
+        predict(test_x.ix[idx],
+                uid_map[test_x.ix[idx]['sid']],
+                iid_map[test_x.ix[idx]['cid']])
+        for idx in test_x.index
+    ])
     predictions = predictions.reshape(len(predictions))  # make 1D
     err = predictions - test_y
     rmse = np.sqrt((err ** 2).sum() / len(err))
