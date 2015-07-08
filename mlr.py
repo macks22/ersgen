@@ -4,6 +4,7 @@ Mixed-membership Multi-Linear Regression model implemented with Theano.
 """
 import os
 import sys
+import time
 import logging
 import argparse
 
@@ -11,6 +12,10 @@ import theano
 import theano.tensor as T
 import numpy as np
 import pandas as pd
+
+
+def compute_rmse(err):
+    return np.sqrt((err ** 2).sum() / len(err))
 
 
 def make_parser():
@@ -44,7 +49,8 @@ def make_parser():
         help='target variable to predict; default is "grade"')
     parser.add_argument(
         '-v', '--verbose',
-        action='store_true', default=False)
+        type=int, default=0, choices=(0, 1, 2),
+        help='verbosity level; 0=None, 1=INFO, 2=DEBUG')
     parser.add_argument(
         '-o', '--output',
         action='store_true', default=False)
@@ -56,7 +62,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.ERROR,
+        level=(logging.DEBUG if args.verbose == 2 else
+               logging.INFO if args.verbose == 1 else
+               logging.ERROR),
         format="[%(asctime)s]: %(message)s")
 
     uid = 'sid'
@@ -88,6 +96,10 @@ if __name__ == "__main__":
     m = len(iids)
     iid_map = dict(zip(iids, range(m)))
 
+    logging.info('%d users, %d items' % (n, m))
+    logging.info('%d dyads with %d features' % (nd, nf))
+    logging.info('l=%d, lr=%f' % (l, args.lrate))
+
     # train = pd.read_csv(args.train)
     # train_y = train[args.target]
     # train_x = train.drop(args.target, axis=1)
@@ -112,43 +124,45 @@ if __name__ == "__main__":
     g = (1)                                     # actual grade
     g_hat = b_s + b_c + p_s.T.dot(W).dot(f_sc)  # predicted grade
     """
-    randn = lambda dim: np.random.normal(0, 0.1, dim)
+    randn = lambda dim: np.random.normal(0.01, 0.01, dim)
     b_s = theano.shared(value=randn(n), name='b_s', borrow=True)
     b_c = theano.shared(value=randn(m), name='b_c', borrow=True)
-    p_s = theano.shared(value=randn((l, 1)), name='p_s', borrow=True)
-    p_s_zeros = theano.shared(value=np.zeros((l, 1)))
+    P = theano.shared(value=randn((n, l, 1)), name='P', borrow=True)
+    P_zeros = theano.shared(value=np.zeros((l, 1)))
     W = theano.shared(value=randn((l, nf)), name='W', borrow=True)
     W_zeros = theano.shared(value=np.zeros((l, nf)))
     f_sc = T.dvector('f_sc')  # (nf, 1)
 
-    def print_shared():
-        print '%s:\n%s' % (b_s.name, str(b_s.get_value()))
-        print '%s:\n%s' % (b_c.name, str(b_c.get_value()))
-        print '%s:\n%s' % (p_s.name, str(p_s.get_value()))
-        print '%s:\n%s' % (W.name, str(W.get_value()))
+    def log_shared():
+        logging.debug('%s:\n%s' % (b_s.name, str(b_s.get_value())))
+        logging.debug('%s:\n%s' % (b_c.name, str(b_c.get_value())))
+        logging.debug('%s:\n%s' % (P.name, str(P.get_value())))
+        logging.debug('%s:\n%s' % (W.name, str(W.get_value())))
 
-    print_shared()
+    log_shared()
 
     _s = T.lscalar('s')
     _c = T.lscalar('c')
 
-    g_hat = b_s[_s] + b_c[_c] + p_s.T.dot(W).dot(f_sc)
+    g_hat = b_s[_s] + b_c[_c] + P[_s].T.dot(W).dot(f_sc)
     g = T.scalar('g')
     err = 0.5 * ((g_hat - g) ** 2)  # not sure if this is correct for RMSE
-    reg = args.lambda_ * ((p_s ** 2).sum() + (W ** 2).sum())
+    reg = args.lambda_ * ((P[_s] ** 2).sum() + (W ** 2).sum())
     loss = (err + reg).sum()  # the sum just pulls out the single value
 
-    to_update = [b_s, b_c, p_s, W]
+    logging.info('compiling compute code')
+    to_update = [b_s, b_c, P, W]
     gradients = dict(zip([v.name for v in to_update], T.grad(loss, to_update)))
     updates = [(v, v - args.lrate * gradients[v.name]) for v in to_update]
     inputs = [f_sc, g, _s, _c]
     train_P = theano.function(
         inputs=inputs, outputs=loss, name='train_P',
         updates=[
-            (p_s,
-             T.maximum(
-                 p_s_zeros,
-                 (p_s - args.lrate * gradients[p_s.name]) / p_s.sum()))
+            (P, T.set_subtensor(
+                    P[_s],
+                    T.maximum(
+                        P_zeros,
+                        P[_s] - args.lrate * gradients[P.name][_s])))
         ])
     train_W = theano.function(
         inputs=inputs, outputs=loss, name='train_W',
@@ -170,28 +184,37 @@ if __name__ == "__main__":
                       0, b_c[_c] - args.lrate * gradients[b_c.name][_c])))
         ])
 
+    # Main training loop.
+    logging.info('training model for %d iterations' % args.iters)
+    start = time.time()
     for it in range(args.iters):
+        elapsed = time.time() - start
+        logging.info('iteration %03d\t(%.2fs)' % (it + 1, elapsed))
         for train_model in [train_P, train_B, train_W]:
             for idx in np.random.permutation(train_x.index):
                 x = train_x.ix[idx]
                 train_model(x, train_y.ix[idx],
                             uid_map[x['sid']], iid_map[x['cid']])
 
-        print_shared()
+        log_shared()
 
+    elapsed = time.time() - start
+    logging.info('total time elapsed: %.2fs' % elapsed)
+
+    logging.info('making predictions')
     predict = theano.function([f_sc, _s, _c], g_hat)
     predictions = np.array([
         predict(test_x.ix[idx],
                 uid_map[test_x.ix[idx]['sid']],
                 iid_map[test_x.ix[idx]['cid']])
         for idx in test_x.index
-    ])
-    predictions = predictions.reshape(len(predictions))  # make 1D
+    ]).reshape(len(test_x))  # make 1D
+
     err = predictions - test_y
-    rmse = np.sqrt((err ** 2).sum() / len(err))
-    print 'RMSE:\t%.4f' % rmse
+    rmse = compute_rmse(err)
+    print 'MLR RMSE:\t%.4f' % rmse
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
     err = baseline_pred - test_y
-    rmse = np.sqrt((err ** 2).sum() / len(err))
+    rmse = compute_rmse(err)
     print 'baseline RMSE:\t%.4f' % rmse
