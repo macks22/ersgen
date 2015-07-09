@@ -8,6 +8,8 @@ import time
 import logging
 import argparse
 
+from itertools import izip
+
 import theano
 import theano.tensor as T
 import numpy as np
@@ -17,6 +19,15 @@ import pandas as pd
 def rmse_from_err(err):
     return np.sqrt((err ** 2).sum() / len(err))
 
+def fro_norm(mat):
+    return (mat ** 2).sum()
+
+def l2_norm(mat):
+    return T.sqrt((mat ** 2).sum())
+
+def l1_norm(mat):
+    return abs(mat).sum()
+
 
 def make_parser():
     parser = argparse.ArgumentParser(
@@ -24,12 +35,6 @@ def make_parser():
     parser.add_argument(
         '-d', '--data_file', default='',
         help='path of data file')
-    parser.add_argument(
-        '-tr', '--train',
-        help='path of training data file')
-    parser.add_argument(
-        '-te', '--test',
-        help='path of test data file')
     parser.add_argument(
         '-n', '--nmodels',
         type=int, default=3,
@@ -105,48 +110,39 @@ if __name__ == "__main__":
             data[key] = data[f] ** 2
             data[key] = (data[key] - data[key].mean()) / data[key].std(ddof=0)
 
-    # Split dataset into train & test, predicting only for last term (for now).
-    prediction_term = data.term.max()
-    test = data[data.term == prediction_term]
-    train = data[data.term < prediction_term]
-
-    logging.info('splitting train/test sets into X, y')
-    train_y = train[args.target]
-    train_uids = train[uid]
-    train_iids = train[iid]
-    train_x = train.drop(data_keys, axis=1)
-
-    test_y = test[args.target]
-    test_uids = test[uid]
-    test_iids = test[iid]
-    test_x = test.drop(data_keys, axis=1)
-
-    # Get dimensions of training data.
-    nd, nf = train_x.shape
-    l = args.nmodels
-
     # Map user ids to bias indices.
     uids = data[uid].unique()
     n = len(uids)
     uid_map = dict(zip(uids, range(n)))
+    data[uid] = data[uid].apply(lambda _uid: uid_map[_uid])
 
     # Map item ids to bias indices.
     iids = data[iid].unique()
     m = len(iids)
     iid_map = dict(zip(iids, range(m)))
+    data[iid] = data[iid].apply(lambda _iid: iid_map[_iid])
+
+    # Split dataset into train & test, predicting only for last term (for now).
+    prediction_term = data.term.max()
+    test = data[data.term == prediction_term]
+    train = data[data.term < prediction_term]
+
+    def split_data(df):
+        return (df.drop(data_keys, axis=1), df[args.target], df[uid], df[iid])
+
+    logging.info('splitting train/test sets into X, y')
+    train_x, train_y, train_uids, train_iids = split_data(train)
+    test_x, test_y, test_uids, test_iids = split_data(test)
+
+    # Get dimensions of training data.
+    nd, nf = train_x.shape
+    l = args.nmodels
 
     logging.info('%d users, %d items' % (n, m))
     logging.info('%d dyads with %d features' % (nd, nf))
     logging.info('l=%d, lr=%f' % (l, args.lrate))
 
-    # train = pd.read_csv(args.train)
-    # train_y = train[args.target]
-    # train_x = train.drop(args.target, axis=1)
-    # test = pd.read_csv(args.test)
-    # test_y = test[args.target]
-    # test_x = test.drop(args.target, axis=1)
-
-    # Set up Theano variables for single-instance incremental learning.
+    # Set up Theano variables for incremental SGD learning.
     """
     nf =  # features (subscript k)
     n =   # students (subscript s)
@@ -190,10 +186,6 @@ if __name__ == "__main__":
     err = (g_hat - g) ** 2  # for squared loss
 
     # Define regularization function.
-    fro_norm = lambda mat: (mat ** 2).sum()
-    l2_norm = lambda mat: T.sqrt((mat ** 2).sum())
-    l1_norm = lambda mat: T.sum(abs(mat))
-
     norm = (fro_norm if args.regularization == 'fro' else
             l2_norm if args.regularization == 'l2' else
             l1_norm)
@@ -205,8 +197,8 @@ if __name__ == "__main__":
     logging.info('compiling compute code')
     to_update = [b_s, b_c, P, W]
     gradients = dict(zip([v.name for v in to_update], T.grad(loss, to_update)))
-    updates = [(v, v - args.lrate * gradients[v.name]) for v in to_update]
     inputs = [f_sc, g, _s, _c]
+
     train_P = theano.function(
         inputs=inputs, outputs=loss, name='train_P',
         updates=[
@@ -236,44 +228,54 @@ if __name__ == "__main__":
                       0, b_c[_c] - args.lrate * gradients[b_c.name][_c])))
         ])
 
-    predict = theano.function([f_sc, _s, _c], g_hat)
+    # predict = theano.function([f_sc, _s, _c], g_hat, name='predict')
+    # def compute_rmse(Xframe, yframe, uids, iids):
+    #     args_tuples = izip(Xframe.values, uids, iids)
+    #     predictions = np.array([
+    #         predict(*record) for record in args_tuples
+    #     ]).reshape(len(Xframe))
+    #     return rmse_from_err(predictions - yframe)
 
-    def compute_rmse(Xframe, yframe, uids, iids):
-        predictions = np.array([
-            predict(Xframe.ix[idx],
-                    uid_map[uids[idx]],
-                    iid_map[iids[idx]])
-            for idx in Xframe.index
-        ]).reshape(len(Xframe))
+    _X = T.fmatrix('X')
+    _uids = T.ivector('uids')
+    _iids = T.ivector('iids')
+    _y = T.fvector('y')
 
-        err = predictions - yframe
-        return rmse_from_err(err)
+    _predicted, updates = theano.scan(
+        fn=lambda x_i, _u, _i: b_s[_u] + b_c[_i] + P[_u].T.dot(W).dot(x_i),
+        sequences=[_X, _uids, _iids])
+
+    _err = _predicted.reshape(_y.shape) - _y
+    compute_err = theano.function([_X, _y, _uids, _iids], outputs=_err,
+                                   allow_input_downcast=True)
+
+    _rmse = T.sqrt((_err ** 2).sum() / _err.shape[0])
+    compute_rmse = theano.function(inputs=[_X, _y, _uids, _iids],
+                                    outputs=_rmse, allow_input_downcast=True)
 
     def log_train_rmse():
         logging.info('Train RMSE:\t%.4f' % compute_rmse(
-            train_x, train_y, train_uids, train_iids))
+            train_x.values, train_y.values,
+            train_uids.values, train_iids.values))
 
     def log_test_rmse():
         logging.info('Test RMSE:\t%.4f' % compute_rmse(
-            test_x, test_y, test_uids, test_iids))
+            test_x.values, test_y.values, test_uids.values, test_iids.values))
 
     # Main training loop.
     logging.info('training model for %d iterations' % args.iters)
     start = time.time()
-    losses = np.ndarray((args.iters, 3, len(train_x)))
     for it in range(args.iters):
         elapsed = time.time() - start
         logging.info('iteration %03d\t(%.2fs)' % (it + 1, elapsed))
         for train_model in [train_P, train_B, train_W]:
             logging.info('running %s' % train_model.name)
             index = np.random.permutation(train_x.index)
-            training_set = zip(
-                train_x.ix[index].values, train_y.ix[index].values,
-                [uid_map[_uid] for _uid in train_uids[index]],
-                [iid_map[_iid] for _iid in train_iids[index]])
+            training_set = izip(train_x.ix[index].values, train_y.ix[index],
+                                train_uids[index], train_iids[index])
 
-            for (x, y, _uid, _iid) in training_set:
-                train_model(x, y, _uid, _iid)
+            for _args in training_set:
+                train_model(*_args)
 
             if args.verbose == 2:
                 log_train_rmse()
@@ -289,16 +291,11 @@ if __name__ == "__main__":
     logging.info('total time elapsed: %.2fs' % elapsed)
 
     logging.info('making predictions')
-    rmse = compute_rmse(test_x, test_y, test_uids, test_iids)
-    print 'MLR RMSE:\t%.4f' % rmse
+    print 'MLR RMSE:\t%.4f' % compute_rmse(
+        test_x, test_y, test_uids, test_iids)
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
-    err = baseline_pred - test_y
-    rmse = rmse_from_err(err)
-    print 'UR RMSE:\t%.4f' % rmse
+    print 'UR RMSE:\t%.4f' % rmse_from_err(baseline_pred - test_y)
 
-    global_mean = train_y.mean()
-    gm_pred = np.repeat(global_mean, len(test_y))
-    err = gm_pred - test_y
-    rmse = rmse_from_err(err)
-    print 'GM RMSE:\t%.4f' % rmse
+    gm_pred = np.repeat(train_y.mean(), len(test_y))
+    print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
