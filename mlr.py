@@ -14,13 +14,16 @@ import numpy as np
 import pandas as pd
 
 
-def compute_rmse(err):
+def rmse_from_err(err):
     return np.sqrt((err ** 2).sum() / len(err))
 
 
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
+    parser.add_argument(
+        '-d', '--data_file', default='',
+        help='path of data file')
     parser.add_argument(
         '-tr', '--train',
         help='path of training data file')
@@ -69,21 +72,41 @@ if __name__ == "__main__":
 
     uid = 'sid'
     iid = 'cid'
+    features = ['term', 'gender', 'age', 'schrs', 'hsgpa', 'cum_gpa',
+                'cum_cgpa', 'chrs', 'term_chrs', 'term_enrolled']
+    data_keys = [uid, iid, args.target]
+    to_read = list(set(features + data_keys))
 
     logging.info('reading train/test data')
-    data = pd.read_csv('data-n500-m50-t2-d3054.csv')
+    logging.info('reading columns: %s' ', '.join(to_read))
+    data_file = (args.data_file if args.data_file else
+                 'data-n500-m50-t4-d5538.csv')
+    data = pd.read_csv(data_file, usecols=to_read)
+
+    # Z-score scaling to mean of 0 and variance of 1.
+    logging.info('performing z-score scaling on predictors')
+    logging.debug('%s' % ', '.join(features))
+    for f in features:
+        data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
+
     prediction_term = data.term.max()
     test = data[data.term == prediction_term]
     train = data[data.term < prediction_term]
 
     logging.info('splitting train/test sets into X, y')
     train_y = train[args.target]
-    train_x = train.drop(args.target, axis=1)
+    train_uids = train[uid]
+    train_iids = train[iid]
+    train_x = train.drop(data_keys, axis=1)
+
     test_y = test[args.target]
-    test_x = test.drop(args.target, axis=1)
+    test_uids = test[uid]
+    test_iids = test[iid]
+    test_x = test.drop(data_keys, axis=1)
 
     # Get dimensions of training data.
-    nd, nf = train_x.shape
+    nd = len(train_x)
+    nf = len(features)
     l = args.nmodels
 
     # Map user ids to bias indices.
@@ -187,6 +210,25 @@ if __name__ == "__main__":
 
     predict = theano.function([f_sc, _s, _c], g_hat)
 
+    def compute_rmse(Xframe, yframe, uids, iids):
+        predictions = np.array([
+            predict(Xframe.ix[idx],
+                    uid_map[uids[idx]],
+                    iid_map[iids[idx]])
+            for idx in Xframe.index
+        ]).reshape(len(Xframe))
+
+        err = predictions - yframe
+        return rmse_from_err(err)
+
+    def log_train_rmse():
+        logging.info('Train RMSE:\t%.4f' % compute_rmse(
+            train_x, train_y, train_uids, train_iids))
+
+    def log_test_rmse():
+        logging.info('Test RMSE:\t%.4f' % compute_rmse(
+            test_x, test_y, test_uids, test_iids))
+
     # Main training loop.
     logging.info('training model for %d iterations' % args.iters)
     start = time.time()
@@ -196,33 +238,22 @@ if __name__ == "__main__":
         logging.info('iteration %03d\t(%.2fs)' % (it + 1, elapsed))
         for train_model in [train_P, train_B, train_W]:
             logging.info('running %s' % train_model.name)
-            for idx in np.random.permutation(train_x.index):
-                x = train_x.ix[idx]
-                train_model(x, train_y.ix[idx],
-                            uid_map[x['sid']], iid_map[x['cid']])
+            index = np.random.permutation(train_x.index)
+            training_set = zip(
+                train_x.ix[index].values, train_y.ix[index].values,
+                [uid_map[_uid] for _uid in train_uids[index]],
+                [iid_map[_iid] for _iid in train_iids[index]])
+
+            for (x, y, _uid, _iid) in training_set:
+                train_model(x, y, _uid, _iid)
+
+            if args.verbose == 2:
+                log_train_rmse()
+                log_test_rmse()
 
         if args.verbose == 1:
-            predictions = np.array([
-                predict(train_x.ix[idx],
-                        uid_map[train_x.ix[idx]['sid']],
-                        iid_map[train_x.ix[idx]['cid']])
-                for idx in train_x.index
-            ]).reshape(len(train_x))
-
-            err = predictions - train_y
-            rmse = compute_rmse(err)
-            logging.info('Train RMSE:\t%.4f' % rmse)
-
-            predictions = np.array([
-                predict(test_x.ix[idx],
-                        uid_map[test_x.ix[idx]['sid']],
-                        iid_map[test_x.ix[idx]['cid']])
-                for idx in test_x.index
-            ]).reshape(len(test_x))  # make 1D
-
-            err = predictions - test_y
-            rmse = compute_rmse(err)
-            logging.info('Test RMSE:\t%.4f' % rmse)
+            log_train_rmse()
+            log_test_rmse()
 
         log_shared()
 
@@ -230,24 +261,16 @@ if __name__ == "__main__":
     logging.info('total time elapsed: %.2fs' % elapsed)
 
     logging.info('making predictions')
-    predictions = np.array([
-        predict(test_x.ix[idx],
-                uid_map[test_x.ix[idx]['sid']],
-                iid_map[test_x.ix[idx]['cid']])
-        for idx in test_x.index
-    ]).reshape(len(test_x))  # make 1D
-
-    err = predictions - test_y
-    rmse = compute_rmse(err)
+    rmse = compute_rmse(test_x, test_y, test_uids, test_iids)
     print 'MLR RMSE:\t%.4f' % rmse
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
     err = baseline_pred - test_y
-    rmse = compute_rmse(err)
+    rmse = rmse_from_err(err)
     print 'UR RMSE:\t%.4f' % rmse
 
     global_mean = train_y.mean()
     gm_pred = np.repeat(global_mean, len(test_y))
     err = gm_pred - test_y
-    rmse = compute_rmse(err)
+    rmse = rmse_from_err(err)
     print 'GM RMSE:\t%.4f' % rmse
