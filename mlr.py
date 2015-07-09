@@ -141,13 +141,14 @@ if __name__ == "__main__":
 
     log_shared()
 
+    # Indices for users/items
     _s = T.lscalar('s')
     _c = T.lscalar('c')
 
     g_hat = b_s[_s] + b_c[_c] + P[_s].T.dot(W).dot(f_sc)
     g = T.scalar('g')
-    err = 0.5 * ((g_hat - g) ** 2)  # not sure if this is correct for RMSE
-    reg = args.lambda_ * ((P[_s] ** 2).sum() + (W ** 2).sum())
+    err = (g_hat - g) ** 2  # for squared loss
+    reg = args.lambda_ * ((P[_s] ** 2).sum() + (W ** 2).sum())  # Fro norm
     loss = (err + reg).sum()  # the sum just pulls out the single value
 
     logging.info('compiling compute code')
@@ -184,17 +185,44 @@ if __name__ == "__main__":
                       0, b_c[_c] - args.lrate * gradients[b_c.name][_c])))
         ])
 
+    predict = theano.function([f_sc, _s, _c], g_hat)
+
     # Main training loop.
     logging.info('training model for %d iterations' % args.iters)
     start = time.time()
+    losses = np.ndarray((args.iters, 3, len(train_x)))
     for it in range(args.iters):
         elapsed = time.time() - start
         logging.info('iteration %03d\t(%.2fs)' % (it + 1, elapsed))
         for train_model in [train_P, train_B, train_W]:
+            logging.info('running %s' % train_model.name)
             for idx in np.random.permutation(train_x.index):
                 x = train_x.ix[idx]
                 train_model(x, train_y.ix[idx],
                             uid_map[x['sid']], iid_map[x['cid']])
+
+        if args.verbose == 1:
+            predictions = np.array([
+                predict(train_x.ix[idx],
+                        uid_map[train_x.ix[idx]['sid']],
+                        iid_map[train_x.ix[idx]['cid']])
+                for idx in train_x.index
+            ]).reshape(len(train_x))
+
+            err = predictions - train_y
+            rmse = compute_rmse(err)
+            logging.info('Train RMSE:\t%.4f' % rmse)
+
+            predictions = np.array([
+                predict(test_x.ix[idx],
+                        uid_map[test_x.ix[idx]['sid']],
+                        iid_map[test_x.ix[idx]['cid']])
+                for idx in test_x.index
+            ]).reshape(len(test_x))  # make 1D
+
+            err = predictions - test_y
+            rmse = compute_rmse(err)
+            logging.info('Test RMSE:\t%.4f' % rmse)
 
         log_shared()
 
@@ -202,7 +230,6 @@ if __name__ == "__main__":
     logging.info('total time elapsed: %.2fs' % elapsed)
 
     logging.info('making predictions')
-    predict = theano.function([f_sc, _s, _c], g_hat)
     predictions = np.array([
         predict(test_x.ix[idx],
                 uid_map[test_x.ix[idx]['sid']],
@@ -217,4 +244,10 @@ if __name__ == "__main__":
     baseline_pred = np.random.uniform(0, 4, len(test_y))
     err = baseline_pred - test_y
     rmse = compute_rmse(err)
-    print 'baseline RMSE:\t%.4f' % rmse
+    print 'UR RMSE:\t%.4f' % rmse
+
+    global_mean = train_y.mean()
+    gm_pred = np.repeat(global_mean, len(test_y))
+    err = gm_pred - test_y
+    rmse = compute_rmse(err)
+    print 'GM RMSE:\t%.4f' % rmse
