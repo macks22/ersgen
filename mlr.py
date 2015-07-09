@@ -29,6 +29,30 @@ def l1_norm(mat):
     return abs(mat).sum()
 
 
+def scale_features(data, features):
+    """Scale all `features` using Z-score scaling."""
+    logging.info('performing z-score scaling on features')
+    logging.debug('%s' % ', '.join(features))
+    for f in features:
+        data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
+
+
+def map_ids(data, key):
+    """Map ids to 0-contiguous index. This enables the use of these ids as
+    indices into an array (for the bias terms, for instance). This returns the
+    number of unique IDs for `key`.
+    """
+    ids = data[key].unique()
+    n = len(ids)
+    id_map = dict(zip(ids, range(n)))
+    data[key] = data[key].apply(lambda _id: id_map[_id])
+    return n
+
+
+def split_train_test(data, term):
+    return data[data.term < term], data[data.term == term]
+
+
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
@@ -97,10 +121,7 @@ if __name__ == "__main__":
     data = pd.read_csv(data_file, usecols=to_read)
 
     # Z-score scaling to mean of 0 and variance of 1.
-    logging.info('performing z-score scaling on predictors')
-    logging.debug('%s' % ', '.join(features))
-    for f in features:
-        data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
+    scale_features(data, features)
 
     # Add quadratic features of power 2.
     if args.quadratic:
@@ -110,22 +131,12 @@ if __name__ == "__main__":
             data[key] = data[f] ** 2
             data[key] = (data[key] - data[key].mean()) / data[key].std(ddof=0)
 
-    # Map user ids to bias indices.
-    uids = data[uid].unique()
-    n = len(uids)
-    uid_map = dict(zip(uids, range(n)))
-    data[uid] = data[uid].apply(lambda _uid: uid_map[_uid])
-
-    # Map item ids to bias indices.
-    iids = data[iid].unique()
-    m = len(iids)
-    iid_map = dict(zip(iids, range(m)))
-    data[iid] = data[iid].apply(lambda _iid: iid_map[_iid])
+    # Map user/item ids to bias indices.
+    n = map_ids(data, uid)
+    m = map_ids(data, iid)
 
     # Split dataset into train & test, predicting only for last term (for now).
-    prediction_term = data.term.max()
-    test = data[data.term == prediction_term]
-    train = data[data.term < prediction_term]
+    train, test = split_train_test(data, data.term.max())
 
     def split_data(df):
         return (df.drop(data_keys, axis=1), df[args.target], df[uid], df[iid])
