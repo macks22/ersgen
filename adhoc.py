@@ -147,13 +147,14 @@ def adhoc_gen(n, m, nterms):
         _dyads['grade'] = (
             # grades so far is the biggest contributor.
             (_dyads['cum_gpa'] * _dyads['cum_cgpa']) +
-            _dyads['cum_gpa'] + _dyads['cum_cgpa'] +
+            _dyads['cum_gpa'] * 1 +
+            _dyads['cum_cgpa'] * 0.5 +
             # older students perform just slightly better
             _dyads['age'] / 30 +
             # let's say female students perform slightly better
             _dyads['gender'] * 0.2 -
             # match up between alevel and clevel should improve grade
-            abs(_dyads['alevel'] - _dyads['clevel']) -
+            abs(_dyads['alevel'] - _dyads['clevel']) * 2 -
             # smaller number of credit hours should be easier
             (_dyads['chrs'] / 3. - 1) -
             # less classes in a term should be easier
@@ -161,15 +162,15 @@ def adhoc_gen(n, m, nterms):
             # smaller class sizes should improve grades
             _dyads['term_enrolled'] * 0.01
         )
-        logfunc = lambda g: 4 / (1 + np.e ** -(g - 6))
+        logfunc = lambda g: 4 / (1 + np.e ** -(g - 7))
         _dyads['grade'] = _dyads['grade'].apply(logfunc)
 
         # Randomly decrease some of the higher grades to simulate outside
         # effects. May need tweaking to get reasonable grade distribution.
         high_grades = _dyads['grade'][_dyads['grade'] > 3.5]
-        bad = np.random.normal(3.5, 0.1, int(high_grades.shape[0] * 0.04))
-        mid = np.random.normal(1.5, 0.1, int(high_grades.shape[0] * 0.15))
-        low = np.random.normal(0.5, 0.1, int(high_grades.shape[0] * 0.15))
+        bad = np.random.normal(3.5, 0.2, int(high_grades.shape[0] * 0.04))
+        mid = np.random.normal(1.5, 0.1, int(high_grades.shape[0] * 0.20))
+        low = np.random.normal(0.5, 0.1, int(high_grades.shape[0] * 0.30))
         effects = np.concatenate((bad, mid, low))
         np.random.shuffle(effects)
         affected = np.random.choice(
