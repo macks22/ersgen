@@ -39,6 +39,10 @@ def make_parser():
         type=float, default=0.01,
         help='regularization multiplier')
     parser.add_argument(
+        '-r', '--regularization',
+        choices=('fro', 'l1', 'l2'), default='fro',
+        help='type of regularization to use')
+    parser.add_argument(
         '-lr', '--lrate',
         type=float, default=0.001,
         help='learning rate')
@@ -46,6 +50,10 @@ def make_parser():
         '-i', '--iters',
         type=int, default=10,
         help='number of iterations')
+    parser.add_argument(
+        '-q', '--quadratic',
+        action='store_true', default=False,
+        help='add quadratic features (power 2)')
     parser.add_argument(
         '-t', '--target',
         default='grade',
@@ -78,7 +86,7 @@ if __name__ == "__main__":
     to_read = list(set(features + data_keys))
 
     logging.info('reading train/test data')
-    logging.info('reading columns: %s' ', '.join(to_read))
+    logging.info('reading columns: %s' % ', '.join(to_read))
     data_file = (args.data_file if args.data_file else
                  'data-n500-m50-t4-d5538.csv')
     data = pd.read_csv(data_file, usecols=to_read)
@@ -89,6 +97,15 @@ if __name__ == "__main__":
     for f in features:
         data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
 
+    # Add quadratic features of power 2.
+    if args.quadratic:
+        logging.info('adding %d quadratic features' % len(features))
+        for f in features:
+            key = '%s^2' % f
+            data[key] = data[f] ** 2
+            data[key] = (data[key] - data[key].mean()) / data[key].std(ddof=0)
+
+    # Split dataset into train & test, predicting only for last term (for now).
     prediction_term = data.term.max()
     test = data[data.term == prediction_term]
     train = data[data.term < prediction_term]
@@ -105,8 +122,7 @@ if __name__ == "__main__":
     test_x = test.drop(data_keys, axis=1)
 
     # Get dimensions of training data.
-    nd = len(train_x)
-    nf = len(features)
+    nd, nf = train_x.shape
     l = args.nmodels
 
     # Map user ids to bias indices.
@@ -168,10 +184,22 @@ if __name__ == "__main__":
     _s = T.lscalar('s')
     _c = T.lscalar('c')
 
+    # Define error function.
     g_hat = b_s[_s] + b_c[_c] + P[_s].T.dot(W).dot(f_sc)
     g = T.scalar('g')
     err = (g_hat - g) ** 2  # for squared loss
-    reg = args.lambda_ * ((P[_s] ** 2).sum() + (W ** 2).sum())  # Fro norm
+
+    # Define regularization function.
+    fro_norm = lambda mat: (mat ** 2).sum()
+    l2_norm = lambda mat: T.sqrt((mat ** 2).sum())
+    l1_norm = lambda mat: T.sum(abs(mat))
+
+    norm = (fro_norm if args.regularization == 'fro' else
+            l2_norm if args.regularization == 'l2' else
+            l1_norm)
+    reg = args.lambda_ * (norm(P[_s]) + norm(W))
+
+    # The loss function minimizes least squares with regularization.
     loss = (err + reg).sum()  # the sum just pulls out the single value
 
     logging.info('compiling compute code')
