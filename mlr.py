@@ -139,10 +139,20 @@ if __name__ == "__main__":
     train, test = split_train_test(data, data.term.max())
 
     def split_data(df):
+        """Split data into X, y, uids, iids."""
         return (df.drop(data_keys, axis=1), df[args.target], df[uid], df[iid])
 
+    def shared_dataset(dataset):
+        """Convert dataset to Theano shared vars to reduce GPU overhead."""
+        shvar = lambda var: theano.shared(
+            np.asarray(var, dtype=theano.config.floatX))
+        return map(shvar, dataset)
+
     logging.info('splitting train/test sets into X, y')
-    train_x, train_y, train_uids, train_iids = split_data(train)
+    train = split_data(train)
+    train_x, train_y, train_uids, train_iids = train
+    strain_x, strain_y, strain_uids, strain_iids = shared_dataset(train)
+
     test_x, test_y, test_uids, test_iids = split_data(test)
 
     # Get dimensions of training data.
@@ -152,6 +162,7 @@ if __name__ == "__main__":
     logging.info('%d users, %d items' % (n, m))
     logging.info('%d dyads with %d features' % (nd, nf))
     logging.info('l=%d, lr=%f' % (l, args.lrate))
+
 
     # Set up Theano variables for incremental SGD learning.
     """
@@ -177,7 +188,6 @@ if __name__ == "__main__":
     P_zeros = theano.shared(value=np.zeros((l, 1)))
     W = theano.shared(value=randn((l, nf)), name='W', borrow=True)
     W_zeros = theano.shared(value=np.zeros((l, nf)))
-    f_sc = T.dvector('f_sc')  # (nf, 1)
 
     def log_shared():
         logging.debug('%s:\n%s' % (b_s.name, str(b_s.get_value())))
@@ -190,17 +200,21 @@ if __name__ == "__main__":
     # Indices for users/items
     _s = T.lscalar('s')
     _c = T.lscalar('c')
+    i = T.lscalar('index')
+    uid_i = T.cast(strain_uids[i], 'int32')
+    iid_i = T.cast(strain_iids[i], 'int32')
 
     # Define error function.
-    g_hat = b_s[_s] + b_c[_c] + P[_s].T.dot(W).dot(f_sc)
+    g_hat = (b_s[uid_i] + b_c[iid_i] +
+             P[uid_i].T.dot(W).dot(strain_x[i]))
     g = T.scalar('g')
-    err = (g_hat - g) ** 2  # for squared loss
+    err = (g_hat - strain_y[i]) ** 2  # for squared loss
 
     # Define regularization function.
     norm = (fro_norm if args.regularization == 'fro' else
             l2_norm if args.regularization == 'l2' else
             l1_norm)
-    reg = args.lambda_ * (norm(P[_s]) + norm(W))
+    reg = args.lambda_ * (norm(P[uid_i]) + norm(W))
 
     # The loss function minimizes least squares with regularization.
     loss = (err + reg).sum()  # the sum just pulls out the single value
@@ -208,16 +222,18 @@ if __name__ == "__main__":
     logging.info('compiling compute code')
     to_update = [b_s, b_c, P, W]
     gradients = dict(zip([v.name for v in to_update], T.grad(loss, to_update)))
-    inputs = [f_sc, g, _s, _c]
+    inputs = [i]
 
+    # Define model training functions.
     train_P = theano.function(
         inputs=inputs, outputs=loss, name='train_P',
+        # givens={uid_i: T.cast(train_uids[i], 'int32')},
         updates=[
             (P, T.set_subtensor(
-                    P[_s],
+                    P[uid_i],
                     T.maximum(
                         P_zeros,
-                        P[_s] - args.lrate * gradients[P.name][_s])))
+                        P[uid_i] - args.lrate * gradients[P.name][uid_i])))
         ])
     train_W = theano.function(
         inputs=inputs, outputs=loss, name='train_W',
@@ -229,24 +245,19 @@ if __name__ == "__main__":
         updates=[
             (b_s,
              T.set_subtensor(
-                  b_s[_s],
+                  b_s[uid_i],
                   T.largest(
-                      0, b_s[_s] - args.lrate * gradients[b_s.name][_s]))),
+                      0, (b_s[uid_i] -
+                          args.lrate * gradients[b_s.name][uid_i])))),
             (b_c,
              T.set_subtensor(
-                  b_c[_c],
+                  b_c[iid_i],
                   T.largest(
-                      0, b_c[_c] - args.lrate * gradients[b_c.name][_c])))
+                      0, (b_c[iid_i] -
+                          args.lrate * gradients[b_c.name][iid_i]))))
         ])
 
-    # predict = theano.function([f_sc, _s, _c], g_hat, name='predict')
-    # def compute_rmse(Xframe, yframe, uids, iids):
-    #     args_tuples = izip(Xframe.values, uids, iids)
-    #     predictions = np.array([
-    #         predict(*record) for record in args_tuples
-    #     ]).reshape(len(Xframe))
-    #     return rmse_from_err(predictions - yframe)
-
+    # Define prediction, error, and rmse functions.
     _X = T.fmatrix('X')
     _uids = T.ivector('uids')
     _iids = T.ivector('iids')
@@ -274,23 +285,16 @@ if __name__ == "__main__":
             test_x.values, test_y.values, test_uids.values, test_iids.values))
 
     # Main training loop.
+    indices = range(nd)
     logging.info('training model for %d iterations' % args.iters)
     start = time.time()
     for it in range(args.iters):
         elapsed = time.time() - start
         logging.info('iteration %03d\t(%.2fs)' % (it + 1, elapsed))
-        for train_model in [train_P, train_B, train_W]:
-            logging.info('running %s' % train_model.name)
-            index = np.random.permutation(train_x.index)
-            training_set = izip(train_x.ix[index].values, train_y.ix[index],
-                                train_uids[index], train_iids[index])
-
-            for _args in training_set:
-                train_model(*_args)
-
-            if args.verbose == 2:
-                log_train_rmse()
-                log_test_rmse()
+        for idx in np.random.permutation(indices):
+            train_P(idx)
+            train_B(idx)
+            train_W(idx)
 
         if args.verbose == 1:
             log_train_rmse()
@@ -299,7 +303,7 @@ if __name__ == "__main__":
         log_shared()
 
     elapsed = time.time() - start
-    logging.info('total time elapsed: %.2fs' % elapsed)
+    logging.info('total time elapsed:\t(%.2fs)' % elapsed)
 
     logging.info('making predictions')
     print 'MLR RMSE:\t%.4f' % compute_rmse(
