@@ -37,6 +37,18 @@ def scale_features(data, features):
         data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
 
 
+def add_squared_features(data, features):
+    """Add squared versions of the given features."""
+    logging.info('adding %d quadratic features' % len(features))
+    new_keys = []
+    for f in features:
+        key = '%s^2' % f
+        data[key] = data[f] ** 2
+        new_keys.append(key)
+
+    return new_keys
+
+
 def map_ids(data, key):
     """Map ids to 0-contiguous index. This enables the use of these ids as
     indices into an array (for the bias terms, for instance). This returns the
@@ -53,6 +65,13 @@ def split_train_test(data, term):
     return data[data.term < term], data[data.term == term]
 
 
+def shared_dataset(dataset):
+    """Convert dataset to Theano shared vars to reduce GPU overhead."""
+    shvar = lambda var: theano.shared(
+        np.asarray(var, dtype=theano.config.floatX))
+    return map(shvar, dataset)
+
+
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
@@ -60,11 +79,11 @@ def make_parser():
         '-d', '--data_file', default='',
         help='path of data file')
     parser.add_argument(
-        '-n', '--nmodels',
+        '-l', '--nmodels',
         type=int, default=3,
         help='number of linear regression models')
     parser.add_argument(
-        '-l', '--lambda_',
+        '-lam', '--lambda_',
         type=float, default=0.01,
         help='regularization multiplier')
     parser.add_argument(
@@ -120,16 +139,12 @@ if __name__ == "__main__":
                  'data-n500-m50-t4-d5538.csv')
     data = pd.read_csv(data_file, usecols=to_read)
 
-    # Z-score scaling to mean of 0 and variance of 1.
-    scale_features(data, features)
-
     # Add quadratic features of power 2.
     if args.quadratic:
-        logging.info('adding %d quadratic features' % len(features))
-        for f in features:
-            key = '%s^2' % f
-            data[key] = data[f] ** 2
-            data[key] = (data[key] - data[key].mean()) / data[key].std(ddof=0)
+        features += add_squared_features(data, features)
+
+    # Z-score scaling to mean of 0 and variance of 1.
+    scale_features(data, features)
 
     # Map user/item ids to bias indices.
     n = map_ids(data, uid)
@@ -142,17 +157,11 @@ if __name__ == "__main__":
         """Split data into X, y, uids, iids."""
         return (df.drop(data_keys, axis=1), df[args.target], df[uid], df[iid])
 
-    def shared_dataset(dataset):
-        """Convert dataset to Theano shared vars to reduce GPU overhead."""
-        shvar = lambda var: theano.shared(
-            np.asarray(var, dtype=theano.config.floatX))
-        return map(shvar, dataset)
-
     logging.info('splitting train/test sets into X, y')
     train = split_data(train)
-    train_x, train_y, train_uids, train_iids = train
     strain_x, strain_y, strain_uids, strain_iids = shared_dataset(train)
 
+    train_x, train_y, train_uids, train_iids = train
     test_x, test_y, test_uids, test_iids = split_data(test)
 
     # Get dimensions of training data.
@@ -162,7 +171,6 @@ if __name__ == "__main__":
     logging.info('%d users, %d items' % (n, m))
     logging.info('%d dyads with %d features' % (nd, nf))
     logging.info('l=%d, lr=%f' % (l, args.lrate))
-
 
     # Set up Theano variables for incremental SGD learning.
     """
@@ -198,8 +206,6 @@ if __name__ == "__main__":
     log_shared()
 
     # Indices for users/items
-    _s = T.lscalar('s')
-    _c = T.lscalar('c')
     i = T.lscalar('index')
     uid_i = T.cast(strain_uids[i], 'int32')
     iid_i = T.cast(strain_iids[i], 'int32')
@@ -207,8 +213,7 @@ if __name__ == "__main__":
     # Define error function.
     g_hat = (b_s[uid_i] + b_c[iid_i] +
              P[uid_i].T.dot(W).dot(strain_x[i]))
-    g = T.scalar('g')
-    err = (g_hat - strain_y[i]) ** 2  # for squared loss
+    error = (g_hat - strain_y[i]) ** 2  # for squared loss
 
     # Define regularization function.
     norm = (fro_norm if args.regularization == 'fro' else
@@ -217,7 +222,7 @@ if __name__ == "__main__":
     reg = args.lambda_ * (norm(P[uid_i]) + norm(W))
 
     # The loss function minimizes least squares with regularization.
-    loss = (err + reg).sum()  # the sum just pulls out the single value
+    loss = (error + reg).sum()  # the sum just pulls out the single value
 
     logging.info('compiling compute code')
     to_update = [b_s, b_c, P, W]
@@ -227,7 +232,6 @@ if __name__ == "__main__":
     # Define model training functions.
     train_P = theano.function(
         inputs=inputs, outputs=loss, name='train_P',
-        # givens={uid_i: T.cast(train_uids[i], 'int32')},
         updates=[
             (P, T.set_subtensor(
                     P[uid_i],
@@ -258,22 +262,22 @@ if __name__ == "__main__":
         ])
 
     # Define prediction, error, and rmse functions.
-    _X = T.fmatrix('X')
-    _uids = T.ivector('uids')
-    _iids = T.ivector('iids')
-    _y = T.fvector('y')
+    X = T.fmatrix('X')
+    uids = T.ivector('uids')
+    iids = T.ivector('iids')
+    y = T.fvector('y')
 
-    _predicted, updates = theano.scan(
+    predicted, updates = theano.scan(
         fn=lambda x_i, _u, _i: b_s[_u] + b_c[_i] + P[_u].T.dot(W).dot(x_i),
-        sequences=[_X, _uids, _iids])
+        sequences=[X, uids, iids])
 
-    _err = _predicted.reshape(_y.shape) - _y
-    compute_err = theano.function([_X, _y, _uids, _iids], outputs=_err,
-                                   allow_input_downcast=True)
+    err = predicted.reshape(y.shape) - y
+    compute_err = theano.function(
+        [X, y, uids, iids], outputs=err, allow_input_downcast=True)
 
-    _rmse = T.sqrt((_err ** 2).sum() / _err.shape[0])
-    compute_rmse = theano.function(inputs=[_X, _y, _uids, _iids],
-                                    outputs=_rmse, allow_input_downcast=True)
+    rmse = T.sqrt((err ** 2).sum() / err.shape[0])
+    compute_rmse = theano.function(
+        inputs=[X, y, uids, iids], outputs=rmse, allow_input_downcast=True)
 
     def log_train_rmse():
         logging.info('Train RMSE:\t%.4f' % compute_rmse(
