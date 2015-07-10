@@ -153,9 +153,7 @@ if __name__ == "__main__":
     train_x, train_y, train_uids, train_iids = train
     strain_x, strain_y, strain_uids, strain_iids = shared_dataset(train)
 
-    test = split_data(test)
-    test_x, test_y, test_uids, test_iids = test
-    stest_x, stest_y, stest_uids, stest_iids = shared_dataset(test)
+    test_x, test_y, test_uids, test_iids = split_data(test)
 
     # Get dimensions of training data.
     nd, nf = train_x.shape
