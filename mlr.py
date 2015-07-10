@@ -265,6 +265,11 @@ def make_parser():
         type=int, default=10,
         help='number of iterations')
     parser.add_argument(
+        '-s', '--std',
+        type=float, default=0.01,
+        help='standard deviation of Gaussian noise used in model param'
+             'initialization')
+    parser.add_argument(
         '-q', '--quadratic',
         action='store_true', default=False,
         help='add quadratic features (power 2)')
