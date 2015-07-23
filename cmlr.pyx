@@ -21,23 +21,32 @@ def rmse_from_err(np.ndarray err):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def compute_errors(dict model,
-                   np.ndarray[DOUBLE_t, ndim=2] X,
-                   np.ndarray[DOUBLE_t, ndim=1] y,
-                   np.ndarray[INT_t, ndim=1] uids,
-                   np.ndarray[INT_t, ndim=1] iids):
+def mlr_predict(dict model,
+                np.ndarray[DOUBLE_t, ndim=2] X,
+                np.ndarray[INT_t, ndim=1] uids,
+                np.ndarray[INT_t, ndim=1] iids):
 
     cdef np.ndarray[DOUBLE_t, ndim=1] b_s = model['b_s'][uids]
     cdef np.ndarray[DOUBLE_t, ndim=1] b_c = model['b_c'][iids]
     cdef np.ndarray[DOUBLE_t, ndim=3] P = model['P'][uids]
     cdef np.ndarray[DOUBLE_t, ndim=2] W = model['W']
 
-    cdef unsigned int i, n
-    n = X.shape[0]
+    cdef unsigned int i
     return np.array([
-        b_s[i] + b_c[i] + P[i].T.dot(W).dot(X[i]) - y[i]
-        for i in xrange(n)
-    ])
+        b_s[i] + b_c[i] + P[i].T.dot(W).dot(X[i])
+        for i in xrange(X.shape[0])
+    ]).reshape(X.shape[0])
+
+
+def compute_errors(dict model,
+                   np.ndarray[DOUBLE_t, ndim=2] X,
+                   np.ndarray[DOUBLE_t, ndim=1] y,
+                   np.ndarray[INT_t, ndim=1] uids,
+                   np.ndarray[INT_t, ndim=1] iids):
+
+    cdef np.ndarray[DOUBLE_t, ndim=1] predictions = \
+        mlr_predict(model, X, uids, iids)
+    return predictions - y
 
 
 def compute_rmse(dict model,
@@ -45,7 +54,8 @@ def compute_rmse(dict model,
                  np.ndarray[DOUBLE_t, ndim=1] y,
                  np.ndarray[INT_t, ndim=1] uids,
                  np.ndarray[INT_t, ndim=1] iids):
-    cdef np.ndarray errors = compute_errors(model, X, y, uids, iids)
+    cdef np.ndarray[DOUBLE_t, ndim=1] errors = \
+        compute_errors(model, X, y, uids, iids)
     return rmse_from_err(errors)
 
 
@@ -59,12 +69,12 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
             np.ndarray[DOUBLE_t, ndim=1] y,
             np.ndarray[INT_t, ndim=1] uids,
             np.ndarray[INT_t, ndim=1] iids,
-            int l=3,
+            unsigned int l=3,
             double lrate=0.001,
             double lambda_=0.01,
-            int iters=10,
+            unsigned int iters=10,
             double std=0.01,
-            int verbose=0):
+            unsigned int verbose=0):
 
     cdef unsigned int n, m, nd, nf
     n = np.unique(uids).shape[0]
