@@ -6,34 +6,58 @@ import time
 import logging
 
 import numpy as np
+cimport cython
+cimport numpy as np
 
 from util import predict, read_data
 
 
-def fit_pmf(train, probe, uid='uid', iid='iid', target='target', epsilon=50,
-            lambda_=0.01, momentum=0.8, max_epoch=50, nbatches=9, N=100000,
-            nf=10):
+def fit_pmf(train,
+            probe,
+            str uid='uid',
+            str iid='iid',
+            str target='target',
+            unsigned int epsilon=50,
+            double lambda_=0.01,
+            double momentum=0.8,
+            unsigned int max_epoch=50,
+            unsigned int nbatches=9,
+            unsigned int N=100000,
+            unsigned int nf=10):
 
-    mean_rating = train[target].mean()
-    ratings_test = probe[target].values.astype(np.double)
+    cdef double mean_rating = train[target].mean()
+    cdef np.ndarray[np.double_t, ndim=1] ratings_test = \
+        probe[target].values.astype(np.double)
 
-    n = train[uid].max() + 1  # number of users
-    m = train[iid].max() + 1  # number of items
+    cdef unsigned int n = train[uid].max() + 1  # number of users
+    cdef unsigned int m = train[iid].max() + 1  # number of items
 
     # Randomly initialize user and item feature vectors.
-    w_u = 0.1 * np.random.randn(n, nf)  # User
-    w_i = 0.1 * np.random.randn(m, nf)  # Item
+    cdef np.ndarray[np.double_t, ndim=2] w_u = 0.1 * np.random.randn(n, nf)  # User
+    cdef np.ndarray[np.double_t, ndim=2] w_i = 0.1 * np.random.randn(m, nf)  # Item
 
     # Allocate space for feature vector update vectors.
-    w_u_update = np.zeros((n, nf))
-    w_i_update = np.zeros((m, nf))
+    cdef np.ndarray[np.double_t, ndim=2] w_u_update = np.zeros((n, nf))
+    cdef np.ndarray[np.double_t, ndim=2] w_i_update = np.zeros((m, nf))
 
-    err_train = np.zeros(max_epoch)
-    err_valid = np.zeros(max_epoch)
+    # Allocate space for error tracking vectors.
+    cdef np.ndarray[np.double_t, ndim=1] err_train = np.zeros(max_epoch)
+    cdef np.ndarray[np.double_t, ndim=1] err_valid = np.zeros(max_epoch)
 
-    start = time.time()
+    # Allocate other working variables.
+    cdef np.ndarray[np.int_t, ndim=1] uids
+    cdef np.ndarray[np.int_t, ndim=1] iids
+    cdef np.ndarray[np.double_t, ndim=1] ratings, predictions, error, regular
+    cdef np.ndarray[np.double_t, ndim=2] dw_u, dw_i, Ix_u, Ix_i, IO
+
+    cdef unsigned int ii
+    cdef unsigned int epoch, batch
+    cdef np.ndarray[np.int_t, ndim=1] rr  ## rr = random range
+
+    cdef double elapsed, f_s
+    cdef double start = time.time()
     for epoch in xrange(max_epoch):
-        rr = np.random.permutation(train.shape[0])  ## rr = random range
+        rr = np.random.permutation(train.shape[0])
         train = train.ix[rr]
 
         for batch in xrange(nbatches):
@@ -42,7 +66,7 @@ def fit_pmf(train, probe, uid='uid', iid='iid', target='target', epsilon=50,
             train_subset = train.ix[range(batch*N, (batch+1)*N)]
             uids = train_subset[uid].values
             iids = train_subset[iid].values
-            ratings = train_subset[target].values
+            ratings = train_subset[target].values.astype(np.double)
 
             # Default prediction is the mean rating, so subtract it.
             ratings = ratings - mean_rating
@@ -61,7 +85,7 @@ def fit_pmf(train, probe, uid='uid', iid='iid', target='target', epsilon=50,
             dw_u = np.zeros((n, nf))
             dw_i = np.zeros((m, nf))
 
-            for ii in range(N):
+            for ii in xrange(N):
                 dw_u[uids[ii]] += Ix_u[ii]
                 dw_i[iids[ii]] += Ix_i[ii]
 
@@ -87,7 +111,7 @@ def fit_pmf(train, probe, uid='uid', iid='iid', target='target', epsilon=50,
         err_valid[epoch] = np.sqrt((error ** 2).sum() / probe.shape[0])
         logging.info(
             'epoch %2d, Training RMSE: %6.4f, Test RMSE: %6.4f (%.2fs)' % (
-                epoch, err_train[epoch], err_valid[epoch], elapsed))
+                epoch + 1, err_train[epoch], err_valid[epoch], elapsed))
 
         if (epoch + 1) % 10 == 0:
             np.savetxt('w_u.csv', w_u, delimiter=',')

@@ -3,7 +3,11 @@ import logging
 
 import numpy as np
 
-from pmf import fit_pmf
+try:
+    from cpmf import fit_pmf
+except ImportError:
+    from pmf import fit_pmf
+
 from util import read_data
 
 
