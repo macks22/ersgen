@@ -13,14 +13,15 @@ def cov(x):
     return np.cov(x, rowvar=0)
 
 
-if __name__ == "__main__":
-    np.random.seed(1234)
+def fit_bpmf(train, probe, uid='uid', iid='iid', target='target', max_epoch=50,
+             nf=10, stopping_threshold = 0.00001):
 
-    max_epoch = 50
-    iter_ = 0   # track iteration number
-    n = 6040    # number of users
-    m = 3952    # number of items
-    nf = 10     # number of features (latent factor vector dimensionality)
+    mean_rating = train[target].mean()
+    ratings_test = probe[target].values.astype(np.double)
+
+    iter_ = 0                 # track iteration number
+    n = train[uid].max() + 1  # number of users
+    m = train[iid].max() + 1  # number of items
 
     # Initialize hierarchical priors.
     beta = 2  # observation noise (precision)
@@ -41,24 +42,15 @@ if __name__ == "__main__":
     df_i = nf  # degrees of freedom
     mu0_i = np.zeros((nf, 1))
 
-    header_names, train, probe = read_data()
-    uid, iid, target = header_names
-
-    mean_rating = train[target].mean()
-    ratings_test = probe[target].values.astype(np.double)
-
     print 'Converting training triples to matrix format'
-    args = header_names + [False]
+    args = [uid, iid, target, False]
     train_mat = make_matrix(train, *args)
     # train_mat = row_to_mat(train, *header_names)
 
     print 'Initializing BPMF using MAP solution from PMF'
-
     w_u_sample = np.loadtxt('w_u.csv', delimiter=',')
     w_i_sample = np.loadtxt('w_i.csv', delimiter=',')
-    # err_test = np.empty((max_epoch, 1), dtype=object)
 
-    # Initialization using MAP solution found by PMF.
     mu_u = w_u_sample.mean(axis=0)
     alpha_u = np.linalg.inv(cov(w_u_sample))
 
@@ -73,7 +65,6 @@ if __name__ == "__main__":
     ngibbs = 2
     overall_err = np.zeros(max_epoch * ngibbs)
     prev_rmse = np.inf
-    stopping_threshold = 0.00001
 
     for epoch in xrange(max_epoch):
         print '\nEpoch %d' % (epoch + 1)
@@ -164,3 +155,21 @@ if __name__ == "__main__":
             break
         else:
             prev_rmse = rmse
+
+    print 'Final RMSE: %6.4F' % rmse
+    return w_u_sample, w_i_sample, mean_rating, probe_rat_all
+
+
+if __name__ == "__main__":
+    np.random.seed(1234)
+
+    # Read data.
+    header_names, train, probe = read_data()
+    uid, iid, target = header_names
+
+    # Fit BPMF model.
+    w_u, w_i, mean_rating, predictions = fit_bpmf(train, probe, uid, iid, target)
+
+    print 'Saving user/item feature vectors'
+    np.savetxt('w_u.csv', w_u, delimiter=',')
+    np.savetxt('w_i.csv', w_i, delimiter=',')
