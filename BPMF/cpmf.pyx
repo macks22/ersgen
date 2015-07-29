@@ -12,18 +12,26 @@ cimport numpy as np
 from util import predict, read_data
 
 
+@cython.boundscheck(False)
+@cython.wraparound(False)
 def fit_pmf(train,
             probe,
             str uid='uid',
             str iid='iid',
             str target='target',
-            unsigned int epsilon=50,
+            int epsilon=50,
             double lambda_=0.01,
             double momentum=0.8,
             unsigned int max_epoch=50,
             unsigned int nbatches=9,
             unsigned int N=100000,
             unsigned int nf=10):
+
+    # Convert data to correct types.
+    for dataset in [train, probe]:
+        for key in [uid, iid]:
+            dataset[key] = dataset[key].values.astype(np.int)
+        dataset[target] = dataset[target].values.astype(np.double)
 
     cdef double mean_rating = train[target].mean()
     cdef np.ndarray[np.double_t, ndim=1] ratings_test = \
@@ -45,14 +53,12 @@ def fit_pmf(train,
     cdef np.ndarray[np.double_t, ndim=1] err_valid = np.zeros(max_epoch)
 
     # Allocate other working variables.
-    cdef np.ndarray[np.int_t, ndim=1] uids
-    cdef np.ndarray[np.int_t, ndim=1] iids
+    cdef np.ndarray[np.int_t, ndim=1] uids, iids
     cdef np.ndarray[np.double_t, ndim=1] ratings, predictions, error, regular
     cdef np.ndarray[np.double_t, ndim=2] dw_u, dw_i, Ix_u, Ix_i, IO
 
-    cdef unsigned int ii
-    cdef unsigned int epoch, batch
-    cdef np.ndarray[np.int_t, ndim=1] rr  ## rr = random range
+    cdef unsigned int epoch, batch, ii
+    cdef np.ndarray[np.long_t, ndim=1] rr  ## rr = random range
 
     cdef double elapsed, f_s
     cdef double start = time.time()
@@ -66,7 +72,7 @@ def fit_pmf(train,
             train_subset = train.ix[range(batch*N, (batch+1)*N)]
             uids = train_subset[uid].values
             iids = train_subset[iid].values
-            ratings = train_subset[target].values.astype(np.double)
+            ratings = train_subset[target].values
 
             # Default prediction is the mean rating, so subtract it.
             ratings = ratings - mean_rating

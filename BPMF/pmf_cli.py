@@ -35,6 +35,14 @@ def make_parser():
         type=int, default=100000,
         help='number of records to process per batch')
     parser.add_argument(
+        '-m', '--momentum',
+        type=float, default=0.8,
+        help='SGD learning momentum; default 0.8')
+    parser.add_argument(
+        '-e', '--epsilon',
+        type=int, default=50,
+        help='SGD learning rate; default is 50')
+    parser.add_argument(
         '-v', '--verbose',
         type=int, default=0, choices=(0, 1, 2),
         help='enable verbose output logging')
@@ -62,7 +70,8 @@ if __name__ == "__main__":
     logging.info('fitting PMF model')
     w_u, w_i = fit_pmf(train, probe, uid, iid, target, nf=args.dim,
                        max_epoch=args.iters, lambda_=args.lambda_,
-                       nbatches=args.nbatches, N=args.batch_size)
+                       nbatches=args.nbatches, N=args.batch_size,
+                       momentum=args.momentum, epsilon=args.epsilon)
 
     # Finally, save weights at the end.
     logging.info('saving data')
