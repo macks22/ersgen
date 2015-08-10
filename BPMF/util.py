@@ -55,7 +55,12 @@ def wishrnd(W, df):
     """
     W = np.array(W)
     n = W.shape[0]
-    L = np.linalg.cholesky(W)  # obtain lower triangle of matrix
+
+    # obtain lower triangle of matrix
+    try:
+        L = np.linalg.cholesky(W)
+    except np.linalg.LinAlgError:
+        p, L, u = sp.linalg.lu(W)
 
     # borrowed from Matlab
     if (df <= 81 + n) and (df == round(df)):
