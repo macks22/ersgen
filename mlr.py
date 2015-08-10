@@ -114,9 +114,7 @@ if __name__ == "__main__":
 
     logging.info('reading train/test data')
     logging.info('reading columns: %s' % ', '.join(to_read))
-    data_file = (args.data_file if args.data_file else
-                 'data-n500-m50-t4-d5538.csv')
-    data = pd.read_csv(data_file, usecols=to_read)
+    data = pd.read_csv(args.data_file, usecols=to_read)
 
     # Add quadratic features of power 2.
     if args.quadratic:

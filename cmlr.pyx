@@ -1,6 +1,5 @@
 """
 Mixed-membership Multi-Linear Regression model (non-Theano version).
-
 """
 import time
 import logging
