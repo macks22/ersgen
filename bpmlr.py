@@ -11,12 +11,13 @@ import numpy as np
 import pandas as pd
 from sklearn import preprocessing
 
-from util import wishrnd
+from util import wishrnd, load_np_vars
 
 
 # Error codes
 BOUNDS_FORMAT = 1000
 MISSING_ATTRIBUTE = 1001
+DIM_MISMATCH = 1002
 
 
 def predict(s, c, P, W, X, uids, iids, bounds=(0, 4)):
@@ -93,6 +94,10 @@ def make_parser():
         '-s', '--stopping-threshold',
         type=float, default=0.00001,
         help='early stopping threshold')
+    parser.add_argument(
+        '-w', '--warm-start',
+        default='',
+        help='init (warm-start) params from saved values in this directory')
     return parser
 
 
@@ -170,8 +175,6 @@ if __name__ == "__main__":
     # Init G precision.
     alpha_G = 2
 
-    # TODO: Init params from MLR model results.
-
     # Init s params and hyperparams.
     mu0_s = 0
     alpha0_s = 1
@@ -212,12 +215,42 @@ if __name__ == "__main__":
     covar_W = np.linalg.inv(lambda_W * k0_W)
     mu_W = np.random.multivariate_normal(mu0_W, covar_W)
 
-    # Finally, init actual parameters.
-    # TODO: init from least squares MLR solution.
-    s = np.random.normal(mu_s, np.sqrt(1 / alpha_s), N)
-    c = np.random.normal(mu_c, np.sqrt(1 / alpha_c), M)
-    P = np.random.multivariate_normal(mu_P, covar_P, N)
-    W = np.random.multivariate_normal(mu_W, covar_W, L)
+    # Finally, init actual parameters...
+    if args.warm_start:  # ...from saved parameters
+        model = load_np_vars(args.warm_start)
+        s = model['s']
+        c = model['c']
+        P = model['P']
+        W = model['W']
+
+        # Convert P to 2-dimensional.
+        P = P.reshape(P.shape[0], P.shape[1])
+
+        # Sanity check dimensions.
+        if s.shape[0] != N:
+            print 'Dimension 1 of s: %d != %d' % (s.shape[0], N)
+            sys.exit(DIM_MISMATCH)
+        elif c.shape[0] != M:
+            print 'Dimension 1 of c: %d != %d' % (c.shape[0], M)
+            sys.exit(DIM_MISMATCH)
+        elif P.shape[0] != N:
+            print 'Dimension 1 of P: %d != %d' % (P.shape[0], N)
+            sys.exit(DIM_MISMATCH)
+        elif P.shape[1] != L:
+            print 'Dimension 2 of P: %d != %d' % (P.shape[1], L)
+            sys.exit(DIM_MISMATCH)
+        elif W.shape[0] != L:
+            print 'Dimension 1 of W: %d != %d' % (W.shape[0], L)
+            sys.exit(DIM_MISMATCH)
+        elif W.shape[1] != nf:
+            print 'Dimension 2 of W: %d != %d' % (W.shape[1], nf)
+            sys.exit(DIM_MISMATCH)
+
+    else:  # ...randomly using hyperparameters
+        s = np.random.normal(mu_s, np.sqrt(1 / alpha_s), N)
+        c = np.random.normal(mu_c, np.sqrt(1 / alpha_c), M)
+        P = np.random.multivariate_normal(mu_P, covar_P, N)
+        W = np.random.multivariate_normal(mu_W, covar_W, L)
 
     # Calculate initial predictions.
     overall_err = np.zeros(args.nsamples)

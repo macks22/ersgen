@@ -25,14 +25,14 @@ def mlr_predict(dict model,
                 np.ndarray[INT_t, ndim=1] uids,
                 np.ndarray[INT_t, ndim=1] iids):
 
-    cdef np.ndarray[DOUBLE_t, ndim=1] b_s = model['b_s'][uids]
-    cdef np.ndarray[DOUBLE_t, ndim=1] b_c = model['b_c'][iids]
+    cdef np.ndarray[DOUBLE_t, ndim=1] s = model['s'][uids]
+    cdef np.ndarray[DOUBLE_t, ndim=1] c = model['c'][iids]
     cdef np.ndarray[DOUBLE_t, ndim=3] P = model['P'][uids]
     cdef np.ndarray[DOUBLE_t, ndim=2] W = model['W']
 
     cdef unsigned int i
     return np.array([
-        b_s[i] + b_c[i] + P[i].T.dot(W).dot(X[i])
+        s[i] + c[i] + P[i].T.dot(W).dot(X[i])
         for i in xrange(X.shape[0])
     ]).reshape(X.shape[0])
 
@@ -82,14 +82,14 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
     cdef np.ndarray[DOUBLE_t, ndim=3] X = _X.reshape((nd, nf, 1))
 
     #randn = lambda dim: np.random.normal(0.01, std, dim)
-    cdef np.ndarray[DOUBLE_t, ndim=1] b_s = randn(std, (n,))
-    cdef np.ndarray[DOUBLE_t, ndim=1] b_c = randn(std, (m,))
+    cdef np.ndarray[DOUBLE_t, ndim=1] s = randn(std, (n,))
+    cdef np.ndarray[DOUBLE_t, ndim=1] c = randn(std, (m,))
     cdef np.ndarray[DOUBLE_t, ndim=3] P = randn(std, (n, l, 1))
     cdef np.ndarray[DOUBLE_t, ndim=2] W = randn(std, (l, nf))
 
     model = {
-        'b_s': b_s,
-        'b_c': b_c,
+        's': s,
+        'c': c,
         'P': P,
         'W': W
     }
@@ -97,7 +97,7 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
     cdef np.ndarray[INT_t, ndim=1] indices = np.arange(nd)
     cdef double start, elapsed
     cdef double y_hat, error
-    cdef unsigned int _sc, _iter, s, c
+    cdef unsigned int _sc, _iter, _s, _c
 
     logging.info('training model for %d iterations' % iters)
     start = time.time()
@@ -105,19 +105,19 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
         elapsed = time.time() - start
         logging.info('iteration %03d\t(%.2fs)' % (_iter + 1, elapsed))
         for _sc in np.random.permutation(indices):
-            s = uids[_sc]
-            c = iids[_sc]
-            P_s = P[s]
+            _s = uids[_sc]
+            _c = iids[_sc]
+            P_s = P[_s]
 
             # compute error
-            y_hat = (b_s[s] + b_c[c] + P_s.T.dot(W).dot(X[_sc]))
+            y_hat = (s[_s] + c[_c] + P_s.T.dot(W).dot(X[_sc]))
             error = lrate * 2 * (y_hat - y[_sc])
 
             # update parameters
-            P[s]   -= error * W.dot(X[_sc]) + 2 * lambda_ * P_s
-            b_s[s] -= error
-            b_c[c] -= error
-            W      -= error * P_s.dot(X[_sc].T) + 2 * lambda_ * W
+            P[_s] -= error * W.dot(X[_sc]) + 2 * lambda_ * P_s
+            s[_s] -= error
+            c[_c] -= error
+            W     -= error * P_s.dot(X[_sc].T) + 2 * lambda_ * W
 
         #TODO: if early stopping is implemented, remove conditional.
         if verbose >= 1:  # conditional to avoid unnecessary computation
