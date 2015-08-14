@@ -14,6 +14,9 @@ import theano
 import theano.tensor as T
 import numpy as np
 import pandas as pd
+from sklearn import preprocessing
+
+from util import save_np_vars, add_squared_features
 
 
 def rmse_from_err(err):
@@ -27,26 +30,6 @@ def l2_norm(mat):
 
 def l1_norm(mat):
     return abs(mat).sum()
-
-
-def scale_features(data, features):
-    """Scale all `features` using Z-score scaling."""
-    logging.info('performing z-score scaling on features')
-    logging.debug('%s' % ', '.join(features))
-    for f in features:
-        data[f] = (data[f] - data[f].mean()) / data[f].std(ddof=0)
-
-
-def add_squared_features(data, features):
-    """Add squared versions of the given features."""
-    logging.info('adding %d quadratic features' % len(features))
-    new_keys = []
-    for f in features:
-        key = '%s^2' % f
-        data[key] = data[f] ** 2
-        new_keys.append(key)
-
-    return new_keys
 
 
 def map_ids(data, key):
@@ -150,6 +133,15 @@ class MLR(object):
     @property
     def params(self):
         return [self.b_s, self.b_c, self.P, self.W]
+
+    @property
+    def param_values(self):
+        return {
+            's': self.b_s.get_value(),
+            'c': self.b_c.get_value(),
+            'P': self.P.get_value(),
+            'W': self.W.get_value()
+        }
 
     def log_shared(self):
         for var in self.params:
@@ -283,7 +275,8 @@ def make_parser():
         help='verbosity level; 0=None, 1=INFO, 2=DEBUG')
     parser.add_argument(
         '-o', '--output',
-        action='store_true', default=False)
+        default='',
+        help='directory to save model params to; default is none: do not save')
     return parser
 
 
@@ -299,23 +292,21 @@ if __name__ == "__main__":
 
     uid = 'sid'
     iid = 'cid'
-    features = ['term', 'gender', 'age', 'schrs', 'hsgpa', 'cum_gpa',
-                'cum_cgpa', 'chrs', 'term_chrs', 'term_enrolled']
+    # features = ['term', 'gender', 'age', 'schrs', 'hsgpa', 'cum_gpa',
+    #             'cum_cgpa', 'chrs', 'term_chrs', 'term_enrolled']
     data_keys = [uid, iid, args.target]
-    to_read = list(set(features + data_keys))
+    # to_read = list(set(features + data_keys))
 
     logging.info('reading train/test data')
-    logging.info('reading columns: %s' % ', '.join(to_read))
-    data_file = (args.data_file if args.data_file else
-                 'data-n500-m50-t4-d5538.csv')
-    data = pd.read_csv(data_file, usecols=to_read)
+    # logging.info('reading columns: %s' % ', '.join(to_read))
+    # data = pd.read_csv(args.data_file, usecols=to_read)
+    data = pd.read_csv(args.data_file)
+    features = list(set(data.columns) - set(data_keys))
+    logging.info('read columns: %s' % ', '.join(data.columns))
 
     # Add quadratic features of power 2.
     if args.quadratic:
         features += add_squared_features(data, features)
-
-    # Z-score scaling to mean of 0 and variance of 1.
-    scale_features(data, features)
 
     # Map user/item ids to bias indices.
     n = map_ids(data, uid)
@@ -331,6 +322,12 @@ if __name__ == "__main__":
     logging.info('splitting train/test sets into X, y')
     train_x, train_y, train_uids, train_iids = split_data(train)
     test_x, test_y, test_uids, test_iids = split_data(test)
+
+    # Z-score scaling to mean of 0 and variance of 1.
+    # scale_features(data, features)
+    scaler = preprocessing.StandardScaler()
+    train_x = scaler.fit_transform(train_x)
+    test_x = scaler.transform(test_x)
 
     # Get dimensions of training data.
     nd, nf = train_x.shape
@@ -352,3 +349,7 @@ if __name__ == "__main__":
 
     gm_pred = np.repeat(train_y.mean(), len(test_y))
     print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
+
+    # Save model params.
+    if args.output:
+        save_np_vars(model.param_values, args.output)

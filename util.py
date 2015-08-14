@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import scipy as sp
 import scipy.sparse
+import seaborn as sns
 
 
 def blas_cov(X):
@@ -52,37 +53,6 @@ def predict(w_u, w_i, mean_rating, data, uid='uid', iid='iid', target='target',
     return predictions
 
 
-def wishrnd(W, df):
-    """Generate wishart random variables.
-
-    Args:
-        W: np.ndarray
-            the scale matrix
-        df: int
-            degrees of freedom
-    """
-    W = np.array(W)
-    n = W.shape[0]
-
-    # obtain lower triangle of matrix
-    try:
-        L = np.linalg.cholesky(W)
-    except np.linalg.LinAlgError:
-        p, L, u = sp.linalg.lu(W)
-
-    # borrowed from Matlab
-    if (df <= 81 + n) and (df == round(df)):
-        # direct
-        X = np.dot(L, np.random.normal(size=(n, df)))
-    else:
-        A = np.diag(np.sqrt(np.random.chisquare(df - np.arange(0, n), size=n)))
-        A[np.tri(n, k=-1, dtype=bool)] = \
-            np.random.normal(size=(n * (n - 1) / 2.))
-        X = np.dot(L, A)
-
-    return np.dot(X, X.T)
-
-
 def read_data(uid='uid', iid='iid', target='target'):
     """Read the test data files (train, probe), adjust indices, and return."""
     header_names = [uid, iid, target]
@@ -109,18 +79,6 @@ def row_to_mat(data, uid='uid', iid='iid', target='target'):
     return mat.sort_index(axis=1)\
               .fillna(0)
 
-# %% Create a matrix of size num_p by num_m from triplets {user_id, movie_id, rating_id}  
-# 
-# load moviedata
-# 
-# num_m = 3952;
-# num_p = 6040;
-# count = zeros(num_p,num_m,'single'); %for Netflida data, use sparse matrix instead. 
-# 
-# for mm=1:num_m
-#  ff= find(train_vec(:,2)==mm);
-#  count(train_vec(ff,1),mm) = train_vec(ff,3);
-# end 
 
 def make_matrix(data, uid='uid', iid='iid', target='target', sparse=False):
     """Convert the data from row to matrix format.
@@ -176,8 +134,6 @@ def map_ids(data, key):
     return n
 
 
-
-
 def save_np_vars(vars, savedir):
     """Save a dictionary of numpy variables to `savedir`. We assume
     the directory does not exist; an OSError will be raised if it does.
@@ -209,3 +165,56 @@ def load_np_vars(savedir):
         vars[varname] = np.loadtxt(var_file).reshape(shape)
 
     return vars
+
+
+def traces(params, stop=-1):
+    sample = stop if stop > 0 else params[params.keys()[0]].shape[0]
+    traces = {}
+    for var in params:
+        traces[var] = map(np.linalg.norm, params[var][:sample])
+
+    return pd.DataFrame(traces)
+
+
+def traceplot(params, stop=-1):
+    sample = stop if stop > 0 else params[params.keys()[0]].shape[0]
+    norms = {}
+    means = {}
+    std = {}
+    stats = zip((norms, means, std), (np.linalg.norm, np.mean, np.std))
+    for var in params:
+        samp = params[var][:sample]
+        for d, f in stats:
+            d[var] = map(f, samp)
+
+    to_frame = lambda d, name: \
+        pd.DataFrame(norms)\
+          .unstack(1)\
+          .reset_index()\
+          .rename(columns={'level_0': 'rvar', 'level_1': 'sample', 0: name})
+
+    result = to_frame(norms, 'norm')
+    for params in [(means, 'mean'), (std, 'std')]:
+        frame = to_frame(*params)
+        result = result.merge(frame, on=['rvar', 'sample'], how='left')
+
+    result['group'] = 's'
+    names = ('s', 'c', 'P', 'W')
+    for rvar in result['rvar'].unique():
+        for var_name in names:
+            mask = result.rvar.apply(lambda string: var_name in string)
+            result.loc[mask, 'group'] = var_name
+
+    def grid_plot(y, x='sample', plot=sns.pointplot):
+        grid = sns.FacetGrid(
+            result, col='rvar', col_wrap=3, sharey=False,
+            col_order=['s', 'mu_s', 'alpha_s', 'c', 'mu_c', 'alpha_c',
+                       'P', 'mu_P', 'lambda_P', 'W', 'mu_W', 'lambda_W'])
+        grid.map(plot, x, y)
+        sns.plt.show()
+        return grid
+
+    for stat in ['norm', 'mean', 'std']:
+        grid_plot(stat)
+
+    return result

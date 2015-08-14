@@ -73,7 +73,8 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
             double lambda_=0.01,
             unsigned int iters=10,
             double std=0.01,
-            unsigned int verbose=0):
+            unsigned int verbose=0,
+            unsigned int nonneg=0):
 
     cdef unsigned int n, m, nd, nf
     n = np.unique(uids).shape[0]
@@ -99,6 +100,9 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
     cdef double y_hat, error
     cdef unsigned int _sc, _iter, _s, _c
 
+    cdef np.ndarray[DOUBLE_t, ndim=2] P_zeros = np.zeros((l, 1))
+    cdef np.ndarray[DOUBLE_t, ndim=2] W_zeros = np.zeros((l, nf))
+
     logging.info('training model for %d iterations' % iters)
     start = time.time()
     for _iter in range(iters):
@@ -114,10 +118,20 @@ def fit_mlr(np.ndarray[DOUBLE_t, ndim=2] _X,
             error = lrate * 2 * (y_hat - y[_sc])
 
             # update parameters
-            P[_s] -= error * W.dot(X[_sc]) + 2 * lambda_ * P_s
-            s[_s] -= error
-            c[_c] -= error
-            W     -= error * P_s.dot(X[_sc].T) + 2 * lambda_ * W
+            if nonneg:
+                P[_s] = np.maximum(
+                    P_zeros,
+                    P[_s] - error * W.dot(X[_sc]) + 2 * lambda_ * P_s)
+                s[_s] = np.maximum(0, s[_s] - error)
+                c[_c] = np.maximum(0, s[_c] - error)
+                W = np.maximum(
+                    W_zeros,
+                    W - error * P_s.dot(X[_sc].T) + 2 * lambda_ * W)
+            else:
+                P[_s] -= error * W.dot(X[_sc]) + 2 * lambda_ * P_s
+                s[_s] -= error
+                c[_c] -= error
+                W     -= error * P_s.dot(X[_sc].T) + 2 * lambda_ * W
 
         #TODO: if early stopping is implemented, remove conditional.
         if verbose >= 1:  # conditional to avoid unnecessary computation

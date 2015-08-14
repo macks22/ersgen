@@ -58,6 +58,10 @@ def make_parser():
         default='grade',
         help='target variable to predict; default is "grade"')
     parser.add_argument(
+        '-n', '--nonneg',
+        type=int, choices=(0, 1), default=0,
+        help='enable non-negativity constraints on all params')
+    parser.add_argument(
         '-v', '--verbose',
         type=int, default=0, choices=(0, 1, 2),
         help='verbosity level; 0=None, 1=INFO, 2=DEBUG')
@@ -89,6 +93,7 @@ if __name__ == "__main__":
     # logging.info('reading columns: %s' % ', '.join(to_read))
     # data = pd.read_csv(args.data_file, usecols=to_read)
     data = pd.read_csv(args.data_file)
+    features = list(set(data.columns) - set(data_keys))
     logging.info('read columns: %s' % ', '.join(data.columns))
 
     # Add quadratic features of power 2.
@@ -134,7 +139,8 @@ if __name__ == "__main__":
                     lambda_=args.lambda_,
                     iters=args.iters,
                     std=args.std,
-                    verbose=args.verbose)
+                    verbose=args.verbose,
+                    nonneg=args.nonneg)
 
     logging.info('making predictions')
     print 'MLR RMSE:\t%.4f' % compute_rmse(
