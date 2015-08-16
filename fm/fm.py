@@ -27,6 +27,7 @@ training nor prediction.
 import sys
 import logging
 import argparse
+import itertools as it
 
 import numpy as np
 import scipy as sp
@@ -40,6 +41,7 @@ MISSING_ATTRIBUTE = 1001
 DIM_MISMATCH = 1002
 BAD_FEATURE_CONF = 1003
 BAD_FILENAME = 1004
+BAD_CMDLINE_ARG = 1005
 
 
 class BadFeatureConfig(Exception):
@@ -192,6 +194,42 @@ def read_data(train_file, test_file, conf_file):
     return train_X, train_y, test_X, test_y
 
 
+def predict(X, w0, w, V):
+    """Predict y values for data X given model params w0, w, and V.
+
+    Args:
+        X (sp.sparse.coo.coo_matrix): Sparse data matrix with instances as rows.
+        w0 (float): Global bias term.
+        w (np.ndarray[np.double_t, ndim=1]): 1-way interaction terms.
+        V (np.ndarray[np.double_t, ndim=2]): 2-way interaction terms.
+
+    Returns:
+        np.ndarray[np.double_t, ndim=1]: Predictions \hat{y}.
+
+    """
+    N = X.shape[0]
+    predictions = np.zeros(N)
+
+    two_way = np.zeros(N)
+    for f in xrange(V.shape[1]):
+        t1 = np.zeros(N)
+        t2 = np.zeros(N)
+        for i, j, x in it.izip(X.row, X.col, X.data):
+            tmp = V[j, f] * x
+            t1[i] += tmp
+            t2[i] += tmp ** 2
+
+        two_way += t1 ** 2 - t2
+    two_way *= 0.5
+
+    one_way = np.zeros(N)
+    for i, j, x in it.izip(X.row, X.col, X.data):
+        one_way[i] += w[j] * x
+
+    predictions = w0 + one_way + two_way
+    return predictions
+
+
 def make_parser():
     parser = argparse.ArgumentParser(
         description='BPMLR for non-cold-start dyadic response prediction')
@@ -226,6 +264,11 @@ def make_parser():
         type=float, default=0.00001,
         help='early stopping threshold')
     parser.add_argument(
+        '-l', '--lambda_',
+        default='0.01,0.01',
+        help='1-way and 2-way regularization terms, comma-separated; '
+             'defaults to 0.01,0.01')
+    parser.add_argument(
         '-f', '--feature-guide',
         help='file to specify target, categorical, and real-valued features; '
              'see the docstring for more detailed info on the format')
@@ -249,9 +292,16 @@ if __name__ == "__main__":
         print 'bounds must be comma-separated, got %s' % args.bounds
         sys.exit(BOUNDS_FORMAT)
 
+    # Sanity check regularization terms argument.
+    try:
+        lambda_w, lambda_v = map(float, args.lambda_.split(','))
+    except ValueError:
+        print 'invalid regularization param: %s' % args.lambda_
+        sys.exit(BAD_CMDLINE_ARG)
+
     logging.info('reading train/test files')
     try:
-        train_X, train_y, test_X, test_y = read_data(
+        X, y, test_X, test_y = read_data(
             args.train, args.test, args.feature_guide)
         errno = None
     except IOError as e:
@@ -264,3 +314,75 @@ if __name__ == "__main__":
         sys.exit(errno)
 
     # We have the data, let's begin.
+    nd, nf = X.shape
+    k = args.dim
+    X_csc = X.tocsc()  # for sparse column indexing
+    X_T = X_csc.T
+
+    # Init w0, w, and V.
+    w0 = 0
+    w = np.zeros(nf)
+    V = np.random.normal(0, args.init_stdev, (nf, k))
+
+    # Precompute e and q.
+    y_hat = predict(X, w0, w, V)
+    e = y_hat - y
+
+    q = np.zeros((nd, k))
+    for f in xrange(k):
+        for i, j, x in it.izip(X.row, X.col, X.data):
+            q[i, f] += V[j, f] * x
+
+    # Main optimization loop.
+    prev_rmse = np.sqrt((e ** 2).sum() / nd)
+    logging.info('initial RMSE: %.4f' % prev_rmse)
+    for iteration in xrange(args.iterations):
+
+        # Learn global bias term.
+        w0_new = (e - w0).sum() / nd
+        e += w0_new - w0
+        w0 = w0_new
+
+        # Learn 1-way interaction terms.
+        w_new = np.zeros(nf)
+        w1 = np.zeros(nf)
+        w2 = np.zeros(nf)
+        for j, col in enumerate(X_T):
+            for i, x in it.izip(col.indices, col.data):
+                w1[j] += (e[i] - w[j] * x) * x
+                w2[j] += x ** 2
+
+            w_new[j] -= w1[j] / (w2[j] + lambda_w)
+            e += (w_new[j] - w[j]) * X_T[j].toarray()[0]
+            w[j] = w_new[j]
+
+        # Learn 2-way interaction terms.
+        for f in xrange(k):
+            v_new = np.zeros(nf)
+            v1 = np.zeros(nf)
+            v2 = np.zeros(nf)
+            q_f = q[:, f]
+            for j, col in enumerate(X_T):
+                v = V[j, f]
+                for i, x in it.izip(col.indices, col.data):
+                    h = x * q_f[i] - (x ** 2) * v
+                    v1[j] += (e[i] - v * h) * h
+                    v2[j] += h ** 2
+
+                v_new[j] -= v1[j] / (v2[j] + lambda_v)
+                update = (v_new[j] - v) * X_T[j].toarray()[0]
+                e += update
+                q[:, f] += update
+                V[j, f] = v_new[j]
+
+
+        # Re-evaluate RMSE to prepare for stopping check.
+        y_hat = predict(X, w0, w, V)
+        rmse = np.sqrt(((y_hat - y) ** 2).sum() / nd)
+        # rmse = np.sqrt((e ** 2).sum() / nd)
+        logging.info('RMSE after iteration %d: %.4f' % (iteration, rmse))
+        if prev_rmse - rmse < args.stopping_threshold:
+            logging.info('stopping threshold reached')
+            break
+        else:
+            prev_rmse = rmse
