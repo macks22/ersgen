@@ -2,16 +2,25 @@
 An implementation of the Bayesian formulation of the Personalized Multi-Linear
 Regression (PMLR) model: Bayesian PMLR (BPMRL).
 
+NOTE: the gamma distribution in numpy uses the shape/scale parameterization. So
+whenever we use np.random.gamma, we use shape=alpha, scale=(1/beta).
+
 """
 import sys
 import logging
 import argparse
 
+import scipy as sp
 import numpy as np
 import pandas as pd
 from sklearn import preprocessing
+from scipy.stats import wishart
+from scipy import stats
 
-from util import wishrnd, load_np_vars
+from util import load_np_vars
+
+
+np.random.seed(1234)
 
 
 # Error codes
@@ -20,7 +29,18 @@ MISSING_ATTRIBUTE = 1001
 DIM_MISMATCH = 1002
 
 
-def predict(s, c, P, W, X, uids, iids, bounds=(0, 4)):
+def cov(x):
+    return np.cov(x, rowvar=0)
+
+def solve(X):
+    try:
+        return np.linalg.cholesky(X)
+    except np.linalg.LinAlgError:
+        p, L, u = sp.linalg.lu(X)
+        return L
+
+
+def predict(alpha_G, s, c, P, W, X, uids, iids, bounds=(0, 4)):
     """Make predictions using BPMLR given parameters.
     Assumes features have already been scaled appropriately.
     """
@@ -29,7 +49,11 @@ def predict(s, c, P, W, X, uids, iids, bounds=(0, 4)):
     cbias = c[iids]
     membs = P[uids]
 
-    predictions = sbias + cbias + np.sum(membs.dot(W) * X, 1)
+    means = sbias + cbias + np.sum(membs.dot(W) * X, 1)
+    predictions = np.array([
+        np.random.normal(means[i], alpha_G)
+        for i in xrange(X.shape[0])
+    ])
     predictions[predictions < lo] = lo
     predictions[predictions > hi] = hi
     return predictions
@@ -175,48 +199,32 @@ if __name__ == "__main__":
     # Init G precision.
     alpha_G = 2
 
-    # Init s params and hyperparams.
+    # Init s hyperparams.
     mu0_s = 0
     alpha0_s = 1
     beta0_s = 1
     k0_s = 1
 
-    alpha_s = np.random.gamma(alpha0_s, beta0_s)
-    sigma_s = np.sqrt(1 / (k0_s * alpha_s))
-    mu_s = np.random.normal(mu0_s, sigma_s)
-
-    # Init c params and hyperparams.
+    # Init c hyperparams.
     mu0_c = 0
     alpha0_c = 1
     beta0_c = 1
     k0_c = 1
 
-    alpha_c = np.random.gamma(alpha0_c, beta0_c)
-    sigma_c = np.sqrt(1 / (k0_c * alpha_c))
-    mu_c = np.random.normal(mu0_c, sigma_c)
-
-    # Init P params and hyparparams.
+    # Init P hyparparams.
     mu0_P = np.zeros(L)
     df0_P = L
     W0_P = np.eye(L)
     k0_P = 1
 
-    lambda_P = wishrnd(W0_P, df0_P)
-    covar_P = np.linalg.inv(lambda_P * k0_P)
-    mu_P = np.random.multivariate_normal(mu0_P, covar_P)
-
-    # Init W params and hyperparams.
+    # Init W hyperparams.
     mu0_W = np.zeros(nf)
     df0_W = nf
     W0_W = np.eye(nf)
     k0_W = 1
 
-    lambda_W = wishrnd(W0_W, df0_W)
-    covar_W = np.linalg.inv(lambda_W * k0_W)
-    mu_W = np.random.multivariate_normal(mu0_W, covar_W)
-
-    # Finally, init actual parameters...
-    if args.warm_start:  # ...from saved parameters
+    # Finally, init actual model variables...
+    if args.warm_start:  # ...from saved values.
         model = load_np_vars(args.warm_start)
         s = model['s']
         c = model['c']
@@ -246,91 +254,170 @@ if __name__ == "__main__":
             print 'Dimension 2 of W: %d != %d' % (W.shape[1], nf)
             sys.exit(DIM_MISMATCH)
 
-    else:  # ...randomly using hyperparameters
+        # Init params from saved random vars.
+        mu_s = s.mean()
+        alpha_s = 1 / s.var(ddof=1)
+
+        mu_c = c.mean()
+        alpha_c = 1 / c.var(ddof=1)
+
+        mu_P = P.mean(axis=0)
+        lambda_P = np.linalg.inv(cov(P))
+
+        mu_W = W.mean(axis=0)
+        lambda_W = np.linalg.inv(cov(W))
+
+    else:  # ...randomly using hyperparameters.
+        # Init params using hyperparams.
+        alpha_s = np.random.gamma(alpha0_s, 1 / beta0_s)
+        sigma_s = np.sqrt(1 / (k0_s * alpha_s))
+        mu_s = np.random.normal(mu0_s, sigma_s)
+
+        alpha_c = np.random.gamma(alpha0_c, 1 / beta0_c)
+        sigma_c = np.sqrt(1 / (k0_c * alpha_c))
+        mu_c = np.random.normal(mu0_c, sigma_c)
+
+        lambda_P = wishart.rvs(df0_P, W0_P)
+        covar_P = np.linalg.inv(lambda_P * k0_P)
+        mu_P = np.random.multivariate_normal(mu0_P, covar_P)
+
+        lambda_W = wishart.rvs(df0_W, W0_W)
+        covar_W = np.linalg.inv(lambda_W * k0_W)
+        mu_W = np.random.multivariate_normal(mu0_W, covar_W)
+
+        # Init vars using params.
         s = np.random.normal(mu_s, np.sqrt(1 / alpha_s), N)
         c = np.random.normal(mu_c, np.sqrt(1 / alpha_c), M)
         P = np.random.multivariate_normal(mu_P, covar_P, N)
         W = np.random.multivariate_normal(mu_W, covar_W, L)
 
+
     # Calculate initial predictions.
     overall_err = np.zeros(args.nsamples)
     nsamples = args.nsamples - args.burnin
-    predictions = np.ndarray((nsamples, nd_test))
+    predictions = np.ndarray((nsamples + 1, nd_test))
 
-    initial = predict(s, c, P, W, test_X, test_uids, test_iids, (0, 4))
+    initial = predict(alpha_G, s, c, P, W, test_X, test_uids, test_iids, (0, 4))
     prev_rmse = np.sqrt(((initial - test_y) ** 2).sum() / test_y.shape[0])
+    print 'initial RMSE: %.4f' % prev_rmse
+
+    # Create space to store gibbs samples.
+    dim = lambda mat: [args.nsamples + 1] + list(mat.shape)
+    params = {}
+
+    for var in ['s', 'c', 'P', 'W']:
+        val = globals()[var]
+        params[var] = np.ndarray(dim(val))
+        params[var][0] = val
+
+    for param in ['mu_s', 'alpha_s', 'mu_c', 'alpha_c']:
+        params[param] = np.ndarray(args.nsamples + 1)
+        params[param][0] = globals()[param]
+
+    for param in ['lambda_P', 'mu_P', 'lambda_W', 'mu_W']:
+        val = globals()[param]
+        params[param] = np.ndarray(dim(val))
+        params[param][0] = val
+
+
+    sample = 0
+    def update(param):
+        params[param][sample + 1] = globals()[param]
 
 
     # Begin Gibbs sampling.
-    for sample in xrange(args.nsamples):
+    for sample in xrange(nsamples):
         print 'sample %d' % sample
         for sub_sample in xrange(args.thin):
+            print 'sub-sample %d' % sub_sample
 
-            # Update s hyperparams...
+            # Sample from s hyperparams...
             s_mean = s.mean()
-            beta0_s += (0.5 * (
-                        ((s - s_mean) ** 2).sum() +
-                        (N * k0_s) * ((s_mean - mu0_s) ** 2) / (k0_s + N)))
-            mu0_s = (k0_s * mu0_s + N * s_mean) / (k0_s + N)
-            # k0_s += N
-            alpha0_s += N / 2
+            k_post = k0_s + N
+            beta0_post = (beta0_s +
+                0.5 * ((N * s.var()) +
+                       (N * k0_s) * ((s_mean - mu0_s) ** 2) / k_post))
+            mu0_post = (k0_s * mu0_s + N * s_mean) / k_post
+            alpha0_post = alpha0_s + (N / 2)
 
             # ...and params.
-            alpha_s = np.random.gamma(alpha0_s, beta0_s)
+            alpha_s = np.random.gamma(alpha0_post, 1 / beta0_post)
             sigma_s = np.sqrt(1 / (k0_s * alpha_s))
-            mu_s = np.random.normal(mu0_s, sigma_s)
+            mu_s = np.random.normal(mu0_post, sigma_s)
+            # mu_s = stats.lognorm.rvs(sigma_s, mu0_post)
+
+            update('alpha_s')
+            update('mu_s')
 
             # Update c hyperparams...
             c_mean = c.mean()
-            beta0_c += (0.5 * (
-                        ((c - c_mean) ** 2).sum() +
-                        (M * k0_c) * ((c_mean - mu0_c) ** 2) / (k0_c + M)))
-            mu0_c = (k0_c * mu0_c + M * c_mean) / (k0_c + M)
-            # k0_c += M
-            alpha0_c += M / 2
+            k_post = k0_c + M
+            beta0_post = (beta0_c +
+                0.5 * ((M * c.var()) +
+                       (M * k0_c) * ((c_mean - mu0_c) ** 2) / k_post))
+            mu0_post = (k0_c * mu0_c + M * c_mean) / k_post
+            alpha0_post = alpha0_c + (M / 2)
 
             # ...and params.
-            alpha_c = np.random.gamma(alpha0_c, beta0_c)
+            alpha_c = np.random.gamma(alpha0_post, 1 / beta0_post)
             sigma_c = np.sqrt(1 / (k0_c * alpha_c))
-            mu_c = np.random.normal(mu0_c, sigma_c)
+            mu_c = np.random.normal(mu0_post, sigma_c)
+            # mu_c = stats.lognorm.rvs(sigma_c, mu0_post)
+
+            update('alpha_c')
+            update('mu_c')
 
             # Update P hyperparams...
-            P_hat = P.mean(axis=0)
-            dev_P = P - P_hat
-            mu_tmp = (P_hat - mu0_P).reshape(P_hat.shape[0], 1)
-            W0_P = np.linalg.inv(
-                np.linalg.inv(W0_P) + dev_P.T.dot(dev_P) +
-                (k0_P * N) * mu_tmp.dot(mu_tmp.T) / (k0_P + N))
+            k_post = k0_P + N
+            P_bar = P.mean(axis=0)
+            S_bar = cov(P)
 
-            mu0_P = (k0_P * mu0_P + N * P_hat) / (k0_P + N)
-            df0_P += N
-            # k0_P += N
+            mu_tmp = mu0_P - P_bar
+            W_post = np.linalg.inv(
+                np.linalg.inv(W0_P) + (N * S_bar) +
+                (k0_P * N) * mu_tmp.dot(mu_tmp.T) / k_post)
+            W_post = (W_post + W_post.T) / 2  # Numerical correction?
+
+            df_post = df0_P + N
+            mu_post = (k0_P * mu0_P + N * P_bar) / k_post
 
             # ...and params.
-            lambda_P = wishrnd(W0_P, df0_P)
-            covar_P = np.linalg.inv(lambda_P * k0_P)
-            mu_P = np.random.multivariate_normal(mu0_P, covar_P)
+            lambda_P = wishart.rvs(df_post, W_post)
+            covar_P = np.linalg.inv(k_post * lambda_P)
+            mu_P = np.random.multivariate_normal(mu_post, covar_P)
+            # Low = np.linalg.cholesky(covar_P).T
+            # mu_P = Low.dot(np.random.randn(L)) + mu_post
+            # mu_P = stats.lognorm.rvs(np.diag(covar_P), mu_post)
+
+            update('lambda_P')
+            update('mu_P')
 
             # Update W hyperparams...
-            W_hat = W.mean(axis=0)
-            dev_W = W - W_hat
-            mu_tmp = (W_hat - mu0_W).reshape(W_hat.shape[0], 1)
-            W0_W = np.linalg.inv(
-                np.linalg.inv(W0_W) + dev_W.T.dot(dev_W) +
-                (k0_W * L) * mu_tmp.dot(mu_tmp.T) / (k0_W + L))
-            W0_W = (W0_W + W0_W.T) / 2  # Not sure what this is about.
+            W_bar = W.mean(axis=0)
+            S_bar = cov(W)
+            k_post = k0_W + L
 
-            mu0_W = (k0_W * mu0_W + L * W_hat) / (k0_W + L)
-            df0_W += L
-            # k0_W += L
+            mu_tmp = mu0_W - W_bar
+            W_post = np.linalg.inv(
+                np.linalg.inv(W0_W) + (L * S_bar) +
+                (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
+            W_post = (W_post + W_post.T) / 2  # Numerical correction?
+
+            df_post = df0_W + L
+            mu_post = (k0_W * mu0_W + L * W_bar) / k_post
 
             # ...and params.
-            lambda_W = wishrnd(W0_W, df0_W)
-            covar_W = np.linalg.inv(lambda_W * k0_W)
-            mu_W = np.random.multivariate_normal(mu0_W, covar_W)
+            lambda_W = wishart.rvs(df_post, W_post)
+            covar_W = np.linalg.inv(k_post * lambda_W)
+            mu_W = np.random.multivariate_normal(mu_post, covar_W)
+            # Low = np.linalg.cholesky(covar_W).T
+            # mu_W = Low.dot(np.random.randn(nf)) + mu_post
+            # mu_W = stats.lognorm.rvs(np.diag(covar_W), mu_post)
 
+            update('lambda_W')
+            update('mu_W')
 
-            # Update parameters across users: s and P
+            # Update s across all users.
             cbias = c[iids]
             for i in uniq_uids:
                 mask = train[uid] == i
@@ -340,24 +427,17 @@ if __name__ == "__main__":
                 membs = P[uids]
                 c_js = cbias[rated]
 
-                # Update s
                 alpha_si = alpha_s + X_i.shape[0] * alpha_G
                 sigma_si = np.sqrt(1 / alpha_si)
                 sum_js = np.sum(
-                    c_js + np.sum(membs[rated].dot(W) * X_i, 1) - y_i)
-                mu_si = (alpha_s * mu_s - alpha_G * sum_js) / alpha_si
+                    y_i - c_js - np.sum(membs[rated].dot(W) * X_i, 1))
+                mu_si = (alpha_s * mu_s + alpha_G * sum_js) / alpha_si
                 s[i] = np.random.normal(mu_si, sigma_si)
-
-                # Update P
-                lambda_Pi = lambda_P - alpha_G * (X_i ** 2).sum()
-                covar_Pi = np.linalg.inv(lambda_Pi)
-                sum_js = (X_i * np.repeat(y_i + s[i] + c_js, nf)\
-                                  .reshape(X_i.shape[0], nf)).sum(axis=0)
-                mu_Pi = covar_Pi.dot(lambda_P.dot(mu_P) - alpha_G * W.dot(sum_js))
-                P[i] = np.random.multivariate_normal(mu_Pi, covar_Pi)
+                # s[i] = np.maximum(0, np.random.normal(mu_si, sigma_si))
+                # s[i] = stats.lognorm.rvs(sigma_si, np.exp(mu_s))
 
 
-            # Update parameters across items: c
+            # Update c across all items.
             sbias = s[uids]
             membs = P[uids]
             for j in uniq_iids:
@@ -367,36 +447,68 @@ if __name__ == "__main__":
                 y_j = y[rated]
                 s_is = sbias[rated]
 
-                # Update c
                 alpha_cj = alpha_c + X_i.shape[0] * alpha_G
                 sigma_cj = np.sqrt(1 / alpha_cj)
                 sum_is = np.sum(
-                    s_is + np.sum(membs[rated].dot(W) * X_j, 1) - y_j)
-                mu_cj = (alpha_c * mu_c - alpha_G * sum_is) / alpha_cj
-                c[j] = np.random.normal(mu_cj, sigma_cj)
+                    y_j - s_is - np.sum(membs[rated].dot(W) * X_j, 1))
+                mu_cj = (alpha_c * mu_c + alpha_G * sum_is) / alpha_cj
+                c[j] = np.random.normal(mu_cj, sigma_c)
+                # c[j] = np.maximum(0, np.random.normal(mu_cj, sigma_cj))
+                # c[j] = stats.lognorm.rvs(sigma_cj, mu_cj)
+
+
+            # Update P for all users.
+            cbias = c[iids]
+            for i in uniq_uids:
+                mask = train[uid] == i
+                rated = mask.nonzero()[0]
+                X_i = X[rated]
+                y_i = y[rated]
+                membs = P[uids]
+                c_js = cbias[rated]
+
+                lambda_Pi = lambda_P + alpha_G * W.dot(X_i.T.dot(X_i)).dot(W.T)
+                covar_Pi = np.linalg.inv(lambda_Pi)
+                sum_js = (X_i * (y_i - s[i] - c_js).reshape(X_i.shape[0], 1)).sum(axis=0)
+                mu_Pi = covar_Pi.dot(lambda_P.dot(mu_P) + alpha_G * W.dot(sum_js))
+                P[i] = np.random.multivariate_normal(mu_Pi, covar_Pi)
+                # P[i] = np.maximum(
+                #     mu0_P,
+                #     np.random.multivariate_normal(mu_Pi, covar_Pi))
+                # P[i] = stats.lognorm.rvs(np.diag(covar_Pi), mu_Pi)
 
 
             # Update W
-            P_star = P.sum(axis=0)
-            X_sq_sum = (X ** 2).sum()
+            sbias = s[uids]
+            X_term = X.T.dot(X)
+            X_sum = X.T.dot(X)
             sum_term = np.sum(
-                X * (cbias + sbias + y).repeat(nf).reshape(X.shape[0], nf), 0)
+                X * (cbias + sbias + y).reshape(X.shape[0], 1), 0)
             for l in xrange(L):
-                tmp = P_star[l] * alpha_G
-                lambda_Wl = lambda_W - tmp * P_star[l] * X_sq_sum
+                P_l = P[:, l]
+                lambda_Wl = lambda_W + alpha_G * (P_l ** 2).sum() * X_sum
                 covar_Wl = np.linalg.inv(lambda_Wl)
-                mu_Wl = covar_Wl.dot(lambda_W.dot(mu_W) - tmp * sum_term)
+                mu_Wl = covar_Wl.dot(lambda_W.dot(mu_W) + alpha_G * P_l.sum() * sum_term)
                 W[l] = np.random.multivariate_normal(mu_Wl, covar_Wl)
+                # W[l] = np.maximum(
+                #     mu0_W,
+                #     np.random.multivariate_normal(mu_Wl, covar_Wl))
+                # W[l] = stats.lognorm.rvs(np.diag(covar_Wl), mu_Wl)
 
+
+        # Store samples
+        for var in ['s', 'c', 'P', 'W']:
+            update(var)
 
         # After thinning, make predictions for each sample.
         predictions[sample] = predict(
-            s, c, P, W, test_X, test_uids, test_iids, (0, 4))
+            alpha_G, s, c, P, W, test_X, test_uids, test_iids, (0, 4))
         rmse = np.sqrt(((predictions - test_y) ** 2).sum() / test_y.shape[0])
+        print 'rmse: %.4f' % rmse
 
         # Early stopping improvement threshold check.
-        if (prev_rmse - rmse) <= args.stopping_threshold:
-            print '\tStopping threshold reached'
-            break
-        else:
-            prev_rmse = rmse
+        # if (prev_rmse - rmse) <= args.stopping_threshold:
+        #     print '\tStopping threshold reached'
+        #     break
+        # else:
+        #     prev_rmse = rmse
