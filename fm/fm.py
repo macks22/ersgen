@@ -208,14 +208,15 @@ def predict(X, w0, w, V):
 
     """
     N = X.shape[0]
-    predictions = np.zeros(N)
+    predictions = np.zeros(N) + w0
 
     two_way = np.zeros(N)
     for f in xrange(V.shape[1]):
         t1 = np.zeros(N)
         t2 = np.zeros(N)
+        v_f = V[:, f]
         for i, j, x in it.izip(X.row, X.col, X.data):
-            tmp = V[j, f] * x
+            tmp = v_f[j] * x
             t1[i] += tmp
             t2[i] += tmp ** 2
 
@@ -226,7 +227,7 @@ def predict(X, w0, w, V):
     for i, j, x in it.izip(X.row, X.col, X.data):
         one_way[i] += w[j] * x
 
-    predictions = w0 + one_way + two_way
+    predictions += one_way + two_way
     return predictions
 
 
@@ -330,8 +331,17 @@ if __name__ == "__main__":
 
     q = np.zeros((nd, k))
     for f in xrange(k):
-        for i, j, x in it.izip(X.row, X.col, X.data):
-            q[i, f] += V[j, f] * x
+        for i, j, x_j in it.izip(X.row, X.col, X.data):
+            q[i, f] += V[j, f] * x_j
+
+    trace = {
+        'w0': np.zeros(args.iterations),
+        'w':  np.zeros((args.iterations, nf)),
+        'V':  np.zeros((args.iterations, nf, k))
+    }
+
+    # Set learning rate for 2-way interactions.
+    lrate = 0.01
 
     # Main optimization loop.
     prev_rmse = np.sqrt((e ** 2).sum() / nd)
@@ -343,44 +353,67 @@ if __name__ == "__main__":
         e += w0_new - w0
         w0 = w0_new
 
+        trace['w0'][iteration] = w0
+
         # Learn 1-way interaction terms.
-        w_new = np.zeros(nf)
-        w1 = np.zeros(nf)
-        w2 = np.zeros(nf)
         for j, col in enumerate(X_T):
-            for i, x in it.izip(col.indices, col.data):
-                w1[j] += (e[i] - w[j] * x) * x
-                w2[j] += x ** 2
+            w1 = ((e[col.indices] - w[j] * col.data) * col.data).sum()
+            w2 = (col.data ** 2).sum()
+            w_new = -(w1 / (w2 + lambda_w))
+            e[col.indices] += (w_new - w[j]) * col.data
+            w[j] = w_new
 
-            w_new[j] -= w1[j] / (w2[j] + lambda_w)
-            e += (w_new[j] - w[j]) * X_T[j].toarray()[0]
-            w[j] = w_new[j]
+        # rmse = np.sqrt((e ** 2).sum() / nd)
+        # y_hat = predict(X, w0, w, V)
+        # rmse_sure = np.sqrt(((y_hat - y) ** 2).sum() / nd)
+        # assert(rmse - rmse_sure < 0.00001)
+        # logging.info('RMSE after w update: %.4f' % rmse)
 
+        trace['w'][iteration] = w
+
+        # TODO: the error only starts increasing during this loop.
+        # e gets screwed up somehow, so q probably does too.
+        # In particular, e goes negative, which is not good. The v_new updates
+        # are too aggressive, or the error update rule is wrong.
         # Learn 2-way interaction terms.
         for f in xrange(k):
-            v_new = np.zeros(nf)
-            v1 = np.zeros(nf)
-            v2 = np.zeros(nf)
             q_f = q[:, f]
+            v_f = V[:, f]
             for j, col in enumerate(X_T):
-                v = V[j, f]
-                for i, x in it.izip(col.indices, col.data):
-                    h = x * q_f[i] - (x ** 2) * v
-                    v1[j] += (e[i] - v * h) * h
-                    v2[j] += h ** 2
+                rows = col.indices
+                v_jf = v_f[j]
 
-                v_new[j] -= v1[j] / (v2[j] + lambda_v)
-                update = (v_new[j] - v) * X_T[j].toarray()[0]
-                e += update
-                q[:, f] += update
-                V[j, f] = v_new[j]
+                h = col.data * q_f[rows] - (col.data ** 2) * v_jf
+                # sum_nominator = (np.maximum(np.zeros(len(rows)), e[rows] - v_jf * h) * h).sum()
+                sum_nominator = ((e[rows] - v_jf * h) * h).sum()
+                sum_denominator = (h ** 2).sum()
 
+                v_new = -(sum_nominator / (sum_denominator + lambda_v)) * lrate
+                update = (v_new - v_jf) * col.data
+                e[rows]    += update
+                q[rows, f] += update
+                V[j, f] = v_new
+
+                # rmse = np.sqrt((e ** 2).sum() / nd)
+                # logging.info('RMSE after V update (%d, %d): %.4f' % (f, j,
+                #     rmse))
+            # break
+
+        # rmse = np.sqrt((e ** 2).sum() / nd)
+        # y_hat = predict(X, w0, w, V)
+        # rmse_sure = np.sqrt(((y_hat - y) ** 2).sum() / nd)
+        # assert(abs(rmse - rmse_sure) < 0.00001)
+        # logging.info('RMSE after V update: %.4f' % rmse)
+
+        trace['V'][iteration] = V
 
         # Re-evaluate RMSE to prepare for stopping check.
+        # Also recompute e to avoid gradual numerical rounding errors.
         y_hat = predict(X, w0, w, V)
-        rmse = np.sqrt(((y_hat - y) ** 2).sum() / nd)
-        # rmse = np.sqrt((e ** 2).sum() / nd)
-        logging.info('RMSE after iteration %d: %.4f' % (iteration, rmse))
+        e = y_hat - y
+        rmse = np.sqrt((e ** 2).sum() / nd)
+
+        logging.info('RMSE after iteration %02d: %.4f' % (iteration, rmse))
         if prev_rmse - rmse < args.stopping_threshold:
             logging.info('stopping threshold reached')
             break
