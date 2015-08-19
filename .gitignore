@@ -66,3 +66,6 @@ target/
 *.jpeg
 *.jpg
 *.eps
+
+# Doc files
+*.pdf
