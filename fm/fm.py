@@ -262,13 +262,13 @@ def make_parser():
              'factorized terms')
     parser.add_argument(
         '-s', '--stopping-threshold',
-        type=float, default=0.00001,
+        type=float, default=0.000001,
         help='early stopping threshold')
     parser.add_argument(
         '-l', '--lambda_',
-        default='0.01,0.01',
+        default='0.01,0.1',
         help='1-way and 2-way regularization terms, comma-separated; '
-             'defaults to 0.01,0.01')
+             'defaults to 0.01,0.1')
     parser.add_argument(
         '-f', '--feature-guide',
         help='file to specify target, categorical, and real-valued features; '
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     }
 
     # Set learning rate for 2-way interactions.
-    lrate = 0.01
+    lrate = 0.02
 
     # Main optimization loop.
     prev_rmse = np.sqrt((e ** 2).sum() / nd)
@@ -363,18 +363,13 @@ if __name__ == "__main__":
             e[col.indices] += (w_new - w[j]) * col.data
             w[j] = w_new
 
-        # rmse = np.sqrt((e ** 2).sum() / nd)
-        # y_hat = predict(X, w0, w, V)
-        # rmse_sure = np.sqrt(((y_hat - y) ** 2).sum() / nd)
-        # assert(rmse - rmse_sure < 0.00001)
-        # logging.info('RMSE after w update: %.4f' % rmse)
-
         trace['w'][iteration] = w
 
         # TODO: the error only starts increasing during this loop.
         # e gets screwed up somehow, so q probably does too.
         # In particular, e goes negative, which is not good. The v_new updates
         # are too aggressive, or the error update rule is wrong.
+        # It could also be simply that the rounding error is large.
         # Learn 2-way interaction terms.
         for f in xrange(k):
             q_f = q[:, f]
@@ -383,27 +378,16 @@ if __name__ == "__main__":
                 rows = col.indices
                 v_jf = v_f[j]
 
-                h = col.data * q_f[rows] - (col.data ** 2) * v_jf
-                # sum_nominator = (np.maximum(np.zeros(len(rows)), e[rows] - v_jf * h) * h).sum()
-                sum_nominator = ((e[rows] - v_jf * h) * h).sum()
+                h = col.data * (q_f[rows] - col.data * v_jf)
+                # sum_nominator = ((e[rows] - v_jf * h) * h).sum()
+                sum_nominator = ((v_jf * h - e[rows]) * h).sum()
                 sum_denominator = (h ** 2).sum()
 
-                v_new = -(sum_nominator / (sum_denominator + lambda_v)) * lrate
+                v_new = (sum_nominator / (sum_denominator + lambda_v)) * lrate
                 update = (v_new - v_jf) * col.data
                 e[rows]    += update
                 q[rows, f] += update
                 V[j, f] = v_new
-
-                # rmse = np.sqrt((e ** 2).sum() / nd)
-                # logging.info('RMSE after V update (%d, %d): %.4f' % (f, j,
-                #     rmse))
-            # break
-
-        # rmse = np.sqrt((e ** 2).sum() / nd)
-        # y_hat = predict(X, w0, w, V)
-        # rmse_sure = np.sqrt(((y_hat - y) ** 2).sum() / nd)
-        # assert(abs(rmse - rmse_sure) < 0.00001)
-        # logging.info('RMSE after V update: %.4f' % rmse)
 
         trace['V'][iteration] = V
 
