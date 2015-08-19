@@ -1,0 +1,461 @@
+%% bpmlr.tex
+%% V0.1
+%% 2015/01/01
+%% by Mack Sweeney
+
+\documentclass[10pt]{journal}
+
+
+% *** CITATION PACKAGES ***
+%
+\usepackage{cite}
+% cite.sty was written by Donald Arseneau
+% V1.6 and later of IEEEtran pre-defines the format of the cite.sty package
+% \cite{} output to follow that of IEEE. Loading the cite package will
+% result in citation numbers being automatically sorted and properly
+% "compressed/ranged". e.g., [1], [9], [2], [7], [5], [6] without using
+% cite.sty will become [1], [2], [5]--[7], [9] using cite.sty. cite.sty's
+% \cite will automatically add leading space, if needed. Use cite.sty's
+% noadjust option (cite.sty V3.8 and later) if you want to turn this off.
+% cite.sty is already installed on most LaTeX systems. Be sure and use
+% version 4.0 (2003-05-27) and later if using hyperref.sty. cite.sty does
+% not currently provide for hyperlinked citations.
+% The latest version can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/cite/
+% The documentation is contained in the cite.sty file itself.
+
+
+% *** OTHER BIBLIOGRAPHY PACKAGES ***
+%
+%\usepackage[numbers]{natbib}
+
+
+% *** GRAPHICS RELATED PACKAGES ***
+%
+\usepackage[pdftex]{graphicx}
+% declare the path(s) where your graphic files are
+\graphicspath{{./graphics/}}
+% and their extensions so you won't have to specify these with
+% every instance of \includegraphics
+\DeclareGraphicsExtensions{.pdf,.jpeg,.png}
+
+
+% *** MATH PACKAGES ***
+%
+\usepackage[cmex10, fleqn]{amsmath}
+\usepackage{bm}
+\usepackage{amssymb}
+\usepackage{mathtools}
+% A popular package from the American Mathematical Society that provides
+% many useful and powerful commands for dealing with mathematics. If using
+% it, be sure to load this package with the cmex10 option to ensure that
+% only type 1 fonts will utilized at all point sizes. Without this option,
+% it is possible that some math symbols, particularly those within
+% footnotes, will be rendered in bitmap form which will result in a
+% document that can not be IEEE Xplore compliant!
+%
+% Also, note that the amsmath package sets \interdisplaylinepenalty to 10000
+% thus preventing page breaks from occurring within multiline equations. Use:
+\interdisplaylinepenalty=2500
+% after loading amsmath to restore such page breaks as IEEEtran.cls normally
+% does. amsmath.sty is already installed on most LaTeX systems. The latest
+% version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/required/amslatex/math/
+
+
+% *** SPECIALIZED LIST PACKAGES ***
+%
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+
+
+% *** ALIGNMENT PACKAGES ***
+%
+\usepackage{array}
+\usepackage{booktabs}
+% Frank Mittelbach's and David Carlisle's array.sty patches and improves
+% the standard LaTeX2e array and tabular environments to provide better
+% appearance and additional user controls. As the default LaTeX2e table
+% generation code is lacking to the point of almost being broken with
+% respect to the quality of the end results, all users are strongly
+% advised to use an enhanced (at the very least that provided by array.sty)
+% set of table tools. array.sty is already installed on most systems. The
+% latest version and documentation can be obtained at:
+% http://www.ctan.org/tex-archive/macros/latex/required/tools/
+
+
+% *** FLOAT PACKAGES ***
+%
+\usepackage{fixltx2e}
+% fixltx2e, the successor to the earlier fix2col.sty, was written by
+% Frank Mittelbach and David Carlisle. This package corrects a few problems
+% in the LaTeX2e kernel, the most notable of which is that in current
+% LaTeX2e releases, the ordering of single and double column floats is not
+% guaranteed to be preserved. Thus, an unpatched LaTeX2e can allow a
+% single column figure to be placed prior to an earlier double column
+% figure. The latest version and documentation can be found at:
+% http://www.ctan.org/tex-archive/macros/latex/base/
+
+% BEGIN PAPER CONTENT
+%
+\title{Factorization Machine Alternating Least Squares Summary}
+\author{
+    Mack Sweeney\\
+        George Mason University
+}
+\date{\today}
+
+
+% New commands to be used in this report.
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\pluseq}{\mathrel{+}=}
+\newcommand{\asteq}{\mathrel{*}=}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{proof}{Proof}
+
+
+\begin{document}
+\maketitle
+
+
+\begin{abstract}
+
+In \cite{rendle_fast_2011}, Rendle et al. derive an efficient alternating least
+squares (ALS) algorithm for optimization of the factorization machine (FM). The
+goal of the present paper is to lay out this algorithm in increased detail and
+create a clear Python implementation which sacrifices performance for ease of
+understanding. Increased focus will be placed on notational clarity and
+implementation detail.
+
+\end{abstract}
+
+
+\section{Notation}
+
+The FM model addresses the dyadic response prediction problem, as well as the
+matrix completion problem. As such, the model equation and notation can be
+formulated in a few different ways. We motivate from the perspective of the
+matrix completion problem and then cast our notation into a dyadic response
+prediction formulation. The notation will match that of Rendle et al. in
+\cite{rendle_fast_2011} where reasonable and deviate only in ways that were
+found to increase clarity during implementation. When possible, we also
+incorporate notation from \cite{agarwal_regression-based_2009} to reduce mental
+load where possible and to attempt to unify some of the notation used throughout
+the literature.
+
+Our data consists of a set of $N$ users $U = {u_1, u_2, ..., u_N}$ who rate a
+set of $M$ items $I = {i_1, i_2, ..., i_M}$. The ratings are placed in a $U
+\times I$ matrix $R$. The average user generally rates only a few of the $M$
+items, making $R$ rather sparse in practice. Hence we denote the subset of $R$
+which is observed as $S \subset Y$. From the matrix completion perspective, we
+define a function $r(i, j)$ that computes $R_{i, j}$, the rating user $i$
+assignes to item $j$. The rating prediction task is then to find a function
+$\hat{r}(i, j)$ that estimates the rating $R_{i,j}$ for any user-item
+combination.
+
+This matrix completion formulation is perfectly adequate for traditional matrix
+factorization (MF) techniques such as Singular Value Decomposition (SVD). This is
+because these methods do not incorporate side information. Since the FM model
+incorporates user and item side information, it is often convenient to cast the
+notation of the problem into that of dyadic response prediction. In many problem
+settings, it is not actually necessary or desirable to complete the entire $Y$
+matrix by predicting all unobserved ratings $A = Y / S$. Instead, we often want
+to predict only a subset of the unobserved ratings $P \subset A$ which are of
+interest to us. Furthermore, in the matrix completion problem, the individual
+users $i$ and items $j$ had only identifiers as relevant information. When
+incorporating side information, these scalar IDs are accompanied by other
+features and require vectors for storage.
+
+We now require additional notation to represent the feature vectors for users
+and items. We denote $\bm{a}_i$ as the feature vector of user $i$ and $\bm{b}_j$
+as the feature vector of item $j$. Since we observe user-item dyads $(i, j)$, we
+further define a tensor of dyads $\bm{D}^{U \times I \times p}$, where entry
+$\bm{D}_{i, j}^{p \times 1} = (\bm{q}_i, \bm{z}_j)$ contains the user-item
+features corresponding to the rating $R_{i, j}$. Here $p = |\bm{q}_i| +
+|\bm{z}_j|$ is the total number of user-item features. Since we actually only
+observe ratings for the dyads corresponding to $S$, we assign each dyad $(i, j)
+\in S$ its own unique dyad-specific index $d = {1, ..., O}$ using a mapping
+function $id-map: (i, j) \rightarrow d$ subject to $d \in \mathbb{I}, d > 0$.
+Since we use this mapping extensively, we define $O = O$ to be the number of
+observed ratings. So $d = {1, ..., O}$. We place the observed dyads $\bm{D}_{i,
+j}: (i, j) \in S$ in a matrix of feature vectors $X^{O \times p}$ and the
+observed ratings in a vector $\bm{y}^{O \times 1}$, s.t. $X_d^{p \times 1}$
+contains the user-item features for rating $\bm{y}_d$. With this formulation,
+the dyadic response prediction task is to discover a function $\hat{y}(X_d)$
+that computes an estimate for $y_d$ using the user-item features for dyad $d$.
+
+
+\section{Factorization Machine Model}
+
+The FM model combines and extends two traditional regression models: linear
+regression and MF. Linear regression learns linear interactions between two
+variables. It assumes a single linear interaction occurs between each feature
+and the target variable. MF models learn linear interactions between three
+variables. The assumption is that each user-item pair has a linear effect on the
+target variable. Rendle et al. term these two separate types of effects 1-way
+interactions and 2-way interactions. The FM model incorporates both of these, as
+well as a global bias term which captures the general tendency of the target
+variable. One could also consider the global bias term to be equivalent to the
+noise term typically incorporated in linear regression and many MF models.
+
+The model equation is shown below. Note that we now revert to using $i$ and $j$
+as general indices, rather than as particular users or items. We store the 1-way
+interactions in the vector $\bm{w}$ and the 2-way interaction terms in the
+matrix $V^{p \times k}$. $k$ is the dimensionality of the matrix factorization.
+%
+\begin{equation} \label{eq:fm-general}
+    \hat{y}(X_d) = w_0 + \sum_{i=1}^p \bm{w}_i X_{d,i} +
+        \sum_{i=1}^p \sum_{j=i+1}^p X_{d,i} X_{d,j} \sum_{f=1}^k V_{i,f} V_{j,f}
+\end{equation}
+%
+We can simplify (\ref{eq:fm-general}) slightly by defining a function:
+%
+\begin{equation} \label{eq:factorize-function}
+    f(i, j) = \sum_{f=1}^p V_{i,f} V_{j,f},
+\end{equation}
+%
+which takes feature indices $i, j$ and returns the linear effect for the
+interaction of those features. Assume we store these in a matrix $Z^{p \times
+p}$, such that $Z_{i,j} = f(i, j)$. Now we can substitute this term into
+(\ref{eq:fm-general}):
+%
+\begin{equation} \label{eq:fm-sub-factorized}
+    \hat{y}(X_d) = w_0 + \sum_{i=1}^p \bm{w}_i X_{d,i} +
+        \sum_{i=1}^p \sum_{j=i+1}^p X_{d,i} X_{d,j} Z_{i, j}.
+\end{equation}
+%
+Here we can clearly see the various linear effects at play. Naive computation of
+this prediction function is $O(kp^2)$, where the $p^2$ term comes from
+computation of the factorized interactions $Z$. Rendle et al. showed that
+this can be reduced to $O(kp)$ in \cite{rendle_factorization_2010}. We repeat
+this here in the notation used above for cohesiveness.
+
+\begin{lemma}
+    The model equation of a FM can be computed in linear time $O(kp)$.
+\end{lemma}
+
+\begin{proof}
+    Due to the factorization of pairwise interactions, there is no model
+    parameter that depends directly on two variables (no parameter is indexed by
+    both $i$ and $j$). So the pairwise interaction can be reformulated:
+%%
+    \begin{align}
+        & \hphantom{==  } \begin{aligned}[t]
+            \sum_{i=1}^p \sum_{j=1}^p X_{d,i} Z_{i,j} X_{d,j}  \\
+        \end{aligned} \\
+        &= \begin{aligned}[t]
+            \frac{1}{2}\sum_{i=1}^p \sum_{j=1}^p \sum_{f=1}^k
+                V_{i,f} V_{j,f} X_{d,i} X_{d,j} -
+            \frac{1}{2}\sum_{i=1}^p \sum_{f=1}^k V_{i,f} V_{i,f} X_{d,i} X_{d,i}
+        \end{aligned} \\
+        &= \begin{aligned}[t]
+            \frac{1}{2} \sum_{f=1}^k \left(
+                \left(\sum_{i=1}^p V_{i,f} X_{d,i}\right)
+                \left(\sum_{j=1}^p V_{j,f} X_{d,j}\right) -
+                \sum_{i=1}^p V_{i,f}^2 X_{d,i}^2
+            \right)
+        \end{aligned} \\
+        &= \begin{aligned}[t]
+            \frac{1}{2} \sum_{f=1}^k \left(
+                \left(\sum_{i=1}^p V_{i,f} X_{d,i}\right)^2 -
+                \sum_{i=1}^p V_{i,f}^2 X_{d,i}^2
+            \right)
+        \end{aligned}
+    \end{align}
+\end{proof}
+%
+This result gives us the form of the FM equation we intend to optimize:
+%
+\begin{equation} \label{eq:fm-linear}
+    \hat{y}(X_d) = w_0 + \sum_{i=1}^p \bm{w}_i X_{d,i} +
+        \frac{1}{2} \sum_{f=1}^k \left(
+            \left(\sum_{i=1}^p V_{i,f} X_{d,i}\right)^2 -
+            \sum_{i=1}^p V_{i,f}^2 X_{d,i}^2
+        \right)
+\end{equation}
+
+
+\section{Alternating Least Squares Algorithm}
+
+There are a variety of ways to optimize the FM model equation defined in
+(\ref{eq:fm-linear}). These are summarized in \ref{rendle_factorization_2012}
+and include Stochastic Gradient Descent (SGD), SGD with adaptive regularization,
+Alternating Least Squares (ALS) aka Coordinate Descent, and Markov Chain Monte
+Carlo (MCMC). In this paper, we are interested in the ALS algorithm for
+regression. In order to understand this algorithm, we repeat the relevant lemmas
+from \cite{rendle_fast_2011}, where the ALS algorithm was originally laid out.
+
+\subsection{Foundation}
+
+First we define $\Theta = {w_0, \bm{w}, V}$, our set of model parameters. Next,
+we define the L2-regularized least-squares optimization function:
+%
+\begin{equation} \label{eq:rls-opt}
+    RLS-OPT = \sum_{d=1}^{O} (\hat{y}(X_d) - y_d)^2 +
+              \sum_{\theta \in \Theta} \lambda_\theta \theta^2
+\end{equation}
+%
+With the optimization function defined, we can elaborate on the theory that
+allows fast optimization.
+
+\begin{lemma}
+    An FM is a linear function with respect to every single model parameter
+    $\theta \in \Theta$ and thus can be represented as:
+%%
+    \begin{equation}
+        \hat{y}(X_d | \theta) = g_\theta(X_d) + \theta h_\theta(X_d).
+    \end{equation}
+\end{lemma}
+
+\begin{proof}
+    To prove this, we simply state $g$ and $h$ explicitly for each $\theta \in
+    \Theta$. We use (\ref{eq:fm-sub-factorized}) for conciseness, but the
+    equation in (\ref{eq:fm-linear}) is used during optimization.
+%%
+    \begin{flalign}
+        \hat{y}(X_d | w_0) &= \begin{aligned}[t]
+            w_0 \underbrace{(1)}_{h_{(w_0}(X_d)} +
+            \underbrace{
+                \sum_{i=1}^p \bm{w}_i X_{d,i} +
+                \sum_{i=1}^p \sum_{j=i+1}^p Z_{i,j} X_{d,i} X_{d,j}
+            }_{g_{(w_0)}(X_d)}
+        \end{aligned} \\
+%%
+        \hat{y}(X_d | \bm{w_l}) &= \begin{aligned}[t]
+            \bm{w}_l \underbrace{X_{d,l}}_{h_{(\bm{w}_l)}(X_d)} +
+            \underbrace{
+                w_0 + \sum_{i=1, i \neq l}^p \bm{w}_i X_{d,i} +
+                \sum_{i=1}^p \sum_{j=i+1}^p Z_{i,j} X_{d,i} X_{d,j}
+            }_{g_{(\bm{w_l})}(X_d)}
+        \end{aligned} \\
+%%
+        \hat{y}(X_d | V_{l,f}) &= \begin{aligned}[t]
+          & V_{l,f} \overbrace{
+                X_{d,l} \sum_{i=1, i \neq l}^p V_{i,f} X_{d,i}
+            }^{h_{(V_{l,f})}(X_d)} + \\
+          & \underbrace{
+                w_0 + \sum_{i=1}^p \bm{w}_i X_{d,i} +
+                \sum_{i=1}^p \sum_{j=i+1}^p
+                \sum_{\mathrlap{\hspace{-2mm}
+                    f'=1, (f' \neq f) \cup (l \not\in \{i,j\}) }}^f
+                        X_{d,i} X_{d,j} V_{i,f'} V_{j,f'}
+            }_{g_{(V_{l,f})}(X_d)}
+        \end{aligned}
+    \end{flalign}
+\end{proof}
+
+\begin{lemma}
+    (Optimal value for $\theta$) The regularized least-squares solution of a
+    single parameter $\theta$ given all other parameters $\Theta / {\theta}$ for
+    a linear model $\hat{y}(X_d| \Theta \ {\theta})$ is:
+%%
+    \begin{equation}
+        \theta = \frac{ \sum_{d=1}^{O} (g_\theta(X_d) - y_d) h_\theta(X_d) }
+                      { \sum_{d=1}^{O} h^2_\theta(X_d) + \lambda_\theta }
+    \end{equation}
+\end{lemma}
+
+\begin{proof}
+    To find the solution analytically, the first derivative of
+    (\ref{eq:rls-opt}) w.r.t $\theta$ must be found:
+%%
+    \begin{equation} \label{eq:rls-opt-derivative}
+        \frac{ \partial }{ \partial\theta } \text{RLS-OPT} =
+            \sum_{d=1}^{O} 2(\hat{y}(X_d) - y) h_\theta(X_d) + 2\lambda_\theta
+    \end{equation}
+%%
+    The minimum is where this derivative is equal to 0:
+%%
+    \begin{align}
+        & \hphantom{==} \begin{aligned}[t]
+            \sum_{d=1}^{O} 2(\hat{y}(X_d) - y) h_\theta(X_d) +
+                2\lambda_\theta = 0
+        \end{aligned} \\
+        & \Leftrightarrow \begin{aligned}[t]
+            \sum_{d=1}^{O}
+                (g_\theta(X_d) + \theta h_\theta(X_d) - y) h_\theta(X_d) +
+            \theta\lambda_\theta = 0
+        \end{aligned} \\
+        & \Leftrightarrow \begin{aligned}[t]
+            \sum_{d=1}^{O}
+                (g_\theta(X_d) - y) h_\theta(X_d) +
+            \theta\left(
+                \sum_{d=1}^{O} h^2_\theta(X_d) + \lambda_\theta
+            \right) = 0
+        \end{aligned} \\
+        & \Leftrightarrow \begin{aligned}[t]
+            \theta = -\frac{\sum_{d=1}^{O} (g_\theta(X_d) - y) h_\theta(X_d)}
+                           {\sum_{d=1}^{O} h^2_\theta(X_d) + \lambda_\theta}
+        \end{aligned}
+    \end{align}
+\end{proof}
+
+\subsection{Fast Computation}
+
+
+\subsection{Algorithm}
+
+The ALS algorithm is as follows:
+
+\begin{algorithm}
+\caption{FM-ALS($X, y, \lambda_w, \lambda_V, \sigma$, stopping-threshold)}
+  \begin{algorithmic}[1]
+    \State $w_0 = 0$  \Comment{Initialize parameters}
+    \State $\bm{w} = (0, ..., 0)$
+    \State $V \sim \mathcal{N}(0, \sigma)$
+    \For{$d = \{1, ..., O\}$}  \Comment{Precompute e and q terms}
+        \State $e[d] = \hat{y}(X[d]) - y[d]$
+        \For{$f = \{1, ..., k\}$}
+            \For{$j = \{1, ..., p\}$}
+                \State $q[d, f] \pluseq V[j,f] * X[d,j]$
+            \EndFor
+        \EndFor
+    \EndFor
+    \item[]
+%%
+    \Repeat  \Comment{Main optimization loop}
+        \State $w0\_new = 0$  \Comment{Update global bias}
+        \For{$d = \{1, ..., O\}$}
+            \State $w0\_new \pluseq e[d] - w_0$
+        \EndFor
+        \State $w0\_new = w0\_new / O$
+        \State $e = e + (w0\_new - w_0)$
+        \State $w_0 = w0\_new$
+        \item[]
+%%
+        \For{$j = \{1, ..., p\}$}  \Comment{Update 1-way interactions}
+            \For{$d = \{1, ..., O\}$}
+                \State $err \pluseq e[d] * X_[d,j]$
+                \State $x\_sq \pluseq X[d,j] * X[d,j]$
+            \EndFor
+            \State $w\_new = - (err - w[j] * x\_sq) / (\lambda_w + x\_sq)$
+            \State $e = e + (w\_new - w[j])$
+            \State $w[j] = w\_new$
+        \EndFor
+        \item[]
+%%
+        % Update 2-way interactions
+        \For{$f = \{1, ..., k\}$}  \Comment{Update 2-way interactions}
+            \For{$j = \{1, ..., p\}$}
+                \For{$d = \{1, ..., O\}$}
+                    \State $h = X[d,j] * (q[d,f] - X[d,j] * V[j,f])$
+                    \State $err \pluseq e[d] * h$
+                    \State $h\_sq \pluseq h * h$
+                \EndFor
+                \State $v\_new = - (err - V[j,f] * h\_sq) / (h\_sq + \lambda_v)$
+                \State $e = e + (v\_new - V[j, f])$
+                \State $q = q + (v\_new - V[j, f])$
+                \State $V[j,f] = v\_new$
+            \EndFor
+        \EndFor
+    \Until improvement $<$ stopping-threshold
+  \end{algorithmic}
+\end{algorithm}
+
+
+\bibliographystyle{siam}
+\bibliography{refs}
+
+\end{document}
+
