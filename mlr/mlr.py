@@ -29,13 +29,17 @@ def make_parser():
         type=int, default=3,
         help='number of linear regression models')
     parser.add_argument(
-        '-lam', '--lambda_',
+        '-lw', '--lambda-w',
         type=float, default=0.01,
-        help='regularization multiplier')
+        help='regularization multiplier for P and W')
     parser.add_argument(
-        '-r', '--regularization',
-        choices=('fro', 'l1', 'l2'), default='fro',
-        help='type of regularization to use')
+        '-lb', '--lambda-b',
+        type=float, default=0.001,
+        help='regularization multiplier for s and c')
+    # parser.add_argument(
+    #     '-r', '--regularization',
+    #     choices=('fro', 'l1', 'l2'), default='fro',
+    #     help='type of regularization to use')
     parser.add_argument(
         '-lr', '--lrate',
         type=float, default=0.001,
@@ -101,8 +105,8 @@ if __name__ == "__main__":
         features += add_squared_features(data, features)
 
     # Map user/item ids to bias indices.
-    n = map_ids(data, uid)
-    m = map_ids(data, iid)
+    N = map_ids(data, uid)
+    M = map_ids(data, iid)
 
     # Split dataset into train & test, predicting only for last term (for now).
     train, test = split_train_test(data, data.term.max())
@@ -128,7 +132,7 @@ if __name__ == "__main__":
     nd, nf = train_x.shape
     l = args.nmodels
 
-    logging.info('%d users, %d items' % (n, m))
+    logging.info('%d users, %d items' % (N, M))
     logging.info('%d dyads with %d features' % (nd, nf))
     logging.info('l=%d, lr=%f' % (l, args.lrate))
 
@@ -136,7 +140,8 @@ if __name__ == "__main__":
     model = fit_mlr(train_x, train_y, train_uids, train_iids,
                     l=l,
                     lrate=args.lrate,
-                    lambda_=args.lambda_,
+                    lambda_w=args.lambda_w,
+                    lambda_b=args.lambda_b,
                     iters=args.iters,
                     std=args.std,
                     verbose=args.verbose,
@@ -155,3 +160,55 @@ if __name__ == "__main__":
     # Save model params.
     if args.output:
         save_np_vars(model, args.output)
+
+
+    # Calculate feature importance metrics.
+    # nd = number of nonzero observations
+    uniq_uids = np.unique(train_uids)
+    item_count = np.vectorize(lambda i: train[train[uid] == i].shape[0])
+    m = item_count(uniq_uids)
+
+    user_count = np.vectorize(lambda j: train[train[iid] == j].shape[0])
+    uniq_iids = np.unique(train_iids)
+    n = user_count(uniq_iids)
+
+    # Extract model params from returned dict.
+    s = model['s']
+    c = model['c']
+    P = model['P']
+    W = model['W']
+
+    # Calculate individual deviation contributions.
+    dev = {}
+
+    # user and item bias terms are simple.
+    dev['s'] = (m * s).sum()
+    dev['c'] = (n * c).sum()
+
+    # For the regression coefficients, we actually need to sum over i and j.
+    dev['W'] = np.zeros(nf)
+    membs = P[train_uids]
+    sbias = s[train_uids]
+    cbias = c[train_iids]
+    for i in xrange(train_x.shape[0]):
+        dev['W'] += abs(membs[i].T.dot(W)[0] * train_x[i])
+
+    # Calculate total absolute deviation over all records.
+    T = dev['s'] + dev['c'] + dev['W'].sum()
+
+    # Now calculate importances.
+    imp = {k: dev[k] / T for k in dev}
+
+    I = pd.DataFrame(imp['W'], index=train.drop(data_keys, axis=1).columns)\
+          .rename(columns={0: 'importance'})
+    I.ix[uid] = imp['s']
+    I.ix[iid] = imp['c']
+    I = I.sort('importance')
+
+    # Plot feature importance.
+    ax = I.plot(kind='barh')
+    ax.set_title('Feature Importance for Grade Prediction')
+    ax.set_ylabel('Feature')
+    ax.set_xlabel('Proportion of Deviation From Intercept')
+    ax.legend().draggable(True)
+    ax.figure.show()
