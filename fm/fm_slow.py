@@ -1,13 +1,39 @@
+"""
+Implement Factorization Machine (FM) model.
+
+The following learning algorithms have been implemented:
+
+1.  Alternating Least Squares (ALS)
+
+The command line expects data in CSV format, with separate files for training
+and test records. A required file specifies the format of the attributes in the
+CSV files. Three types of attributes are delineated: (1) target, (2)
+categorical, and (3) real-valued. The target attribute is separated from the
+others during training and predicted for the test data after the model is
+learned. The categorical attributes are one-hot encoded, and the real-valued
+attributes are scaled using Z-score scaling (0 mean, unit variance).
+
+The format for the features file is as follows:
+
+    t:<target>;
+    c:<comma-separated categorical variable names>;
+    r:<comma-separated real-valued variable names>;
+
+Whitespace is ignored, as are lines that start with a "#" symbol. Any variables
+not included in one of the three groups are ignored. They are used neither for
+training nor prediction.
+
+"""
 import sys
+import time
 import logging
 import argparse
+import itertools as it
 
 import numpy as np
-import pandas as pd
 import scipy as sp
+import pandas as pd
 from sklearn import preprocessing
-
-from cfm import fit_fm_als
 
 
 # Error codes
@@ -168,6 +194,127 @@ def read_data(train_file, test_file, conf_file):
 
     return train_X, train_y, test_X, test_y
 
+
+def predict(X, w0, w, V):
+    """Predict y values for data X given model params w0, w, and V.
+
+    Args:
+        X (sp.sparse.coo.coo_matrix): Sparse data matrix with instances as rows.
+        w0 (float): Global bias term.
+        w (np.ndarray[np.double_t, ndim=1]): 1-way interaction terms.
+        V (np.ndarray[np.double_t, ndim=2]): 2-way interaction terms.
+
+    Returns:
+        np.ndarray[np.double_t, ndim=1]: Predictions \hat{y}.
+
+    """
+    N = X.shape[0]
+    predictions = np.zeros(N) + w0
+
+    two_way = np.zeros(N)
+    for f in xrange(V.shape[1]):
+        t1 = np.zeros(N)
+        t2 = np.zeros(N)
+        v_f = V[:, f]
+        for i, j, x in it.izip(X.row, X.col, X.data):
+            tmp = v_f[j] * x
+            t1[i] += tmp
+            t2[i] += tmp ** 2
+
+        two_way += t1 ** 2 - t2
+    two_way *= 0.5
+
+    one_way = np.zeros(N)
+    for i, j, x in it.izip(X.row, X.col, X.data):
+        one_way[i] += w[j] * x
+
+    predictions += one_way + two_way
+    return predictions
+
+
+def fit_fm_als(X,
+               y,
+               iters,
+               threshold,
+               k,
+               lambda_w,
+               lambda_v):
+
+    # We have the data, let's begin.
+    nd, nf = X.shape
+    X_csc = X.tocsc()  # for sparse column indexing
+    X_T = X_csc.T
+
+    # Init w0, w, and V.
+    w0 = 0
+    w = np.zeros(nf)
+    V = np.zeros((nf, k))
+
+    # Precompute e and q.
+    y_hat = predict(X, w0, w, V)
+    e = y_hat - y
+
+    q = np.zeros((nd, k))
+    for f in xrange(k):
+        for i, j, x_j in it.izip(X.row, X.col, X.data):
+            q[i, f] += V[j, f] * x_j
+
+    # Main optimization loop.
+    prev_rmse = np.sqrt((e ** 2).sum() / nd)
+    logging.info('initial RMSE: %.4f' % prev_rmse)
+    start = time.time()
+    for iteration in xrange(iters):
+
+        # Learn global bias term.
+        w0_new = (e - w0).sum() / nd
+        e += w0_new - w0
+        w0 = w0_new
+
+        # Learn 1-way interaction terms.
+        for j, col in enumerate(X_T):
+            w1 = ((e[col.indices] - w[j] * col.data) * col.data).sum()
+            w2 = (col.data ** 2).sum()
+            w_new = -(w1 / (w2 + lambda_w))
+            e[col.indices] += (w_new - w[j]) * col.data
+            w[j] = w_new
+
+        # Learn 2-way interaction terms.
+        for f in xrange(k):
+            q_f = q[:, f]
+            v_f = V[:, f]
+            for j, col in enumerate(X_T):
+                rows = col.indices
+                v_jf = v_f[j]
+
+                h = col.data * (q_f[rows] - col.data * v_jf)
+                # sum_nominator = ((e[rows] - v_jf * h) * h).sum()
+                sum_nominator = ((v_jf * h - e[rows]) * h).sum()
+                sum_denominator = (h ** 2).sum()
+
+                v_new = (sum_nominator / (sum_denominator + lambda_v))
+                update = (v_new - v_jf) * col.data
+                e[rows]    += update
+                q[rows, f] += update
+                V[j, f] = v_new
+
+        # Re-evaluate RMSE to prepare for stopping check.
+        # Also recompute e every 100 iterations to correct gradual rounding err.
+        if iteration % 100 == 0:
+            y_hat = predict(X, w0, w, V)
+            e = y_hat - y
+
+        rmse = np.sqrt((e ** 2).sum() / nd)
+        logging.info(
+            'RMSE after iteration %02d: %.4f  (%.2fs)' % (
+                iteration, rmse, time.time() - start))
+
+        if prev_rmse - rmse < threshold:
+            logging.info('stopping threshold reached')
+            break
+        else:
+            prev_rmse = rmse
+
+    return w0, w, V
 
 
 

@@ -401,11 +401,11 @@ The ALS algorithm is as follows:
 \begin{algorithm}
 \caption{FM-ALS($X, y, \lambda_w, \lambda_V, \sigma$, stopping-threshold)}
   \begin{algorithmic}[1]
-    \State $w_0 = 0$  \Comment{Initialize parameters}
+    \State $w0 = 0$  \Comment{Initialize parameters}
     \State $\bm{w} = (0, ..., 0)$
     \State $V \sim \mathcal{N}(0, \sigma)$
     \For{$d = \{1, ..., O\}$}  \Comment{Precompute e and q terms}
-        \State $e[d] = \hat{y}(X[d]) - y[d]$
+        \State $e[d] = PREDICT(X[d], w0, w, V) - y[d]$
         \For{$f = \{1, ..., k\}$}
             \For{$j = \{1, ..., p\}$}
                 \State $q[d, f] \pluseq V[j,f] * X[d,j]$
@@ -421,7 +421,7 @@ The ALS algorithm is as follows:
         \EndFor
         \State $w0\_new = w0\_new / O$
         \State $e = e + (w0\_new - w_0)$
-        \State $w_0 = w0\_new$
+        \State $w0 = w0\_new$
         \item[]
 %%
         \For{$j = \{1, ..., p\}$}  \Comment{Update 1-way interactions}
