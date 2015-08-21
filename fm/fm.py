@@ -323,7 +323,8 @@ if __name__ == "__main__":
     # Init w0, w, and V.
     w0 = 0
     w = np.zeros(nf)
-    V = np.random.normal(0, args.init_stdev, (nf, k))
+    # V = np.random.normal(0, args.init_stdev, (nf, k))
+    V = np.zeros((nf, k))
 
     # Precompute e and q.
     y_hat = predict(X, w0, w, V)
@@ -341,7 +342,7 @@ if __name__ == "__main__":
     }
 
     # Set learning rate for 2-way interactions.
-    lrate = 0.02
+    # lrate = 0.02
 
     # Main optimization loop.
     prev_rmse = np.sqrt((e ** 2).sum() / nd)
@@ -383,7 +384,7 @@ if __name__ == "__main__":
                 sum_nominator = ((v_jf * h - e[rows]) * h).sum()
                 sum_denominator = (h ** 2).sum()
 
-                v_new = (sum_nominator / (sum_denominator + lambda_v)) * lrate
+                v_new = (sum_nominator / (sum_denominator + lambda_v)) #* lrate
                 update = (v_new - v_jf) * col.data
                 e[rows]    += update
                 q[rows, f] += update
