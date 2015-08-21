@@ -25,6 +25,7 @@ training nor prediction.
 
 """
 import sys
+import time
 import logging
 import argparse
 import itertools as it
@@ -231,6 +232,92 @@ def predict(X, w0, w, V):
     return predictions
 
 
+def fit_fm_als(X,
+               y,
+               iters,
+               threshold,
+               k,
+               lambda_w,
+               lambda_v):
+
+    # We have the data, let's begin.
+    nd, nf = X.shape
+    X_csc = X.tocsc()  # for sparse column indexing
+    X_T = X_csc.T
+
+    # Init w0, w, and V.
+    w0 = 0
+    w = np.zeros(nf)
+    V = np.zeros((nf, k))
+
+    # Precompute e and q.
+    y_hat = predict(X, w0, w, V)
+    e = y_hat - y
+
+    q = np.zeros((nd, k))
+    for f in xrange(k):
+        for i, j, x_j in it.izip(X.row, X.col, X.data):
+            q[i, f] += V[j, f] * x_j
+
+    # Main optimization loop.
+    prev_rmse = np.sqrt((e ** 2).sum() / nd)
+    logging.info('initial RMSE: %.4f' % prev_rmse)
+    start = time.time()
+    for iteration in xrange(iters):
+
+        # Learn global bias term.
+        w0_new = (e - w0).sum() / nd
+        e += w0_new - w0
+        w0 = w0_new
+
+        # Learn 1-way interaction terms.
+        for j, col in enumerate(X_T):
+            w1 = ((e[col.indices] - w[j] * col.data) * col.data).sum()
+            w2 = (col.data ** 2).sum()
+            w_new = -(w1 / (w2 + lambda_w))
+            e[col.indices] += (w_new - w[j]) * col.data
+            w[j] = w_new
+
+        # Learn 2-way interaction terms.
+        for f in xrange(k):
+            q_f = q[:, f]
+            v_f = V[:, f]
+            for j, col in enumerate(X_T):
+                rows = col.indices
+                v_jf = v_f[j]
+
+                h = col.data * (q_f[rows] - col.data * v_jf)
+                # sum_nominator = ((e[rows] - v_jf * h) * h).sum()
+                sum_nominator = ((v_jf * h - e[rows]) * h).sum()
+                sum_denominator = (h ** 2).sum()
+
+                v_new = (sum_nominator / (sum_denominator + lambda_v))
+                update = (v_new - v_jf) * col.data
+                e[rows]    += update
+                q[rows, f] += update
+                V[j, f] = v_new
+
+        # Re-evaluate RMSE to prepare for stopping check.
+        # Also recompute e every 100 iterations to correct gradual rounding err.
+        if iteration % 100 == 0:
+            y_hat = predict(X, w0, w, V)
+            e = y_hat - y
+
+        rmse = np.sqrt((e ** 2).sum() / nd)
+        logging.info(
+            'RMSE after iteration %02d: %.4f  (%.2fs)' % (
+                iteration, rmse, time.time() - start))
+
+        if prev_rmse - rmse < threshold:
+            logging.info('stopping threshold reached')
+            break
+        else:
+            prev_rmse = rmse
+
+    return w0, w, V
+
+
+
 def make_parser():
     parser = argparse.ArgumentParser(
         description='BPMLR for non-cold-start dyadic response prediction')
@@ -314,93 +401,9 @@ if __name__ == "__main__":
         logging.error(e.message)
         sys.exit(errno)
 
-    # We have the data, let's begin.
-    nd, nf = X.shape
-    k = args.dim
-    X_csc = X.tocsc()  # for sparse column indexing
-    X_T = X_csc.T
-
-    # Init w0, w, and V.
-    w0 = 0
-    w = np.zeros(nf)
-    # V = np.random.normal(0, args.init_stdev, (nf, k))
-    V = np.zeros((nf, k))
-
-    # Precompute e and q.
-    y_hat = predict(X, w0, w, V)
-    e = y_hat - y
-
-    q = np.zeros((nd, k))
-    for f in xrange(k):
-        for i, j, x_j in it.izip(X.row, X.col, X.data):
-            q[i, f] += V[j, f] * x_j
-
-    trace = {
-        'w0': np.zeros(args.iterations),
-        'w':  np.zeros((args.iterations, nf)),
-        'V':  np.zeros((args.iterations, nf, k))
-    }
-
-    # Set learning rate for 2-way interactions.
-    # lrate = 0.02
-
-    # Main optimization loop.
-    prev_rmse = np.sqrt((e ** 2).sum() / nd)
-    logging.info('initial RMSE: %.4f' % prev_rmse)
-    for iteration in xrange(args.iterations):
-
-        # Learn global bias term.
-        w0_new = (e - w0).sum() / nd
-        e += w0_new - w0
-        w0 = w0_new
-
-        trace['w0'][iteration] = w0
-
-        # Learn 1-way interaction terms.
-        for j, col in enumerate(X_T):
-            w1 = ((e[col.indices] - w[j] * col.data) * col.data).sum()
-            w2 = (col.data ** 2).sum()
-            w_new = -(w1 / (w2 + lambda_w))
-            e[col.indices] += (w_new - w[j]) * col.data
-            w[j] = w_new
-
-        trace['w'][iteration] = w
-
-        # TODO: the error only starts increasing during this loop.
-        # e gets screwed up somehow, so q probably does too.
-        # In particular, e goes negative, which is not good. The v_new updates
-        # are too aggressive, or the error update rule is wrong.
-        # It could also be simply that the rounding error is large.
-        # Learn 2-way interaction terms.
-        for f in xrange(k):
-            q_f = q[:, f]
-            v_f = V[:, f]
-            for j, col in enumerate(X_T):
-                rows = col.indices
-                v_jf = v_f[j]
-
-                h = col.data * (q_f[rows] - col.data * v_jf)
-                # sum_nominator = ((e[rows] - v_jf * h) * h).sum()
-                sum_nominator = ((v_jf * h - e[rows]) * h).sum()
-                sum_denominator = (h ** 2).sum()
-
-                v_new = (sum_nominator / (sum_denominator + lambda_v)) #* lrate
-                update = (v_new - v_jf) * col.data
-                e[rows]    += update
-                q[rows, f] += update
-                V[j, f] = v_new
-
-        trace['V'][iteration] = V
-
-        # Re-evaluate RMSE to prepare for stopping check.
-        # Also recompute e to avoid gradual numerical rounding errors.
-        y_hat = predict(X, w0, w, V)
-        e = y_hat - y
-        rmse = np.sqrt((e ** 2).sum() / nd)
-
-        logging.info('RMSE after iteration %02d: %.4f' % (iteration, rmse))
-        if prev_rmse - rmse < args.stopping_threshold:
-            logging.info('stopping threshold reached')
-            break
-        else:
-            prev_rmse = rmse
+    w0, w, V = fit_fm_als(X, y,
+                          iters=args.iterations,
+                          threshold=args.stopping_threshold,
+                          k=args.dim,
+                          lambda_w=lambda_w,
+                          lambda_v=lambda_v)
