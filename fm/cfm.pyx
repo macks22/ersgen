@@ -94,8 +94,19 @@ def fit_fm_als(X,
     # We have the data, let's begin.
     cdef int nd = X.shape[0]
     cdef int nf = X.shape[1]
-    X_csc = X.tocsc()  # for sparse column indexing
-    X_T = X_csc.T
+    X_T = X.tocsc().T
+    cdef np.ndarray[object, ndim=1] coldata, colrows
+    for i in xrange(nf):
+        coldata
+    cdef np.ndarray[object, ndim=1] cols = np.array([
+        X_T[i] for i in xrange(nf)
+    ])
+    cdef np.ndarray[object, ndim=1] coldata = np.array([
+        col.data for col in cols
+    ])
+    cdef np.ndarray[object, ndim=1] colrows = np.array([
+        col.indices for col in cols
+    ])
 
     # Init w0, w, and V.
     cdef double w0 = 0
@@ -135,13 +146,12 @@ def fit_fm_als(X,
 
         # Learn 1-way interaction terms.
         for j in xrange(nf):
-            col = X_T[j]
-            dat = col.data
+            dat = coldata[j]
             if not dat.shape[0]:
                 w[j] = 0
                 continue
 
-            rows = col.indices
+            rows = colrows[j]
             sum_nominator = ((w[j] * dat - e[rows]) * dat).sum()
             sum_denominator = blas.ddot(dat, dat)
             w_new = sum_nominator / (sum_denominator + lambda_w)
@@ -153,13 +163,12 @@ def fit_fm_als(X,
             q_f = q[:, f]
             v_f = V[:, f]
             for j in xrange(nf):
-                col = X_T[j]
-                dat = col.data
+                dat = coldata[j]
                 if not dat.shape[0]:
                     V[j, f] = 0
                     continue
 
-                rows = col.indices
+                rows = colrows[j]
                 v_jf = v_f[j]
 
                 h = dat * (q_f[rows] - dat * v_jf)
