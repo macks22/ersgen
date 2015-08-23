@@ -75,8 +75,8 @@ def predict(X,
 
     predictions += ((t1 ** 2) - t2)  * 0.5
 
-    for i, j, x in it.izip(X.row, X.col, X.data):
-        predictions[i] += w[j] * x
+    for i, j, x_j in it.izip(X.row, X.col, X.data):
+        predictions[i] += w[j] * x_j
 
     return predictions
 
@@ -89,15 +89,15 @@ def fit_fm_als(X,
                double threshold,
                unsigned int k,
                double lambda_w,
-               double lambda_v):
+               double lambda_v,
+               double init_stdev):
 
     # We have the data, let's begin.
     cdef int nd = X.shape[0]
     cdef int nf = X.shape[1]
+    cdef unsigned int i, j, f
+
     X_T = X.tocsc().T
-    cdef np.ndarray[object, ndim=1] coldata, colrows
-    for i in xrange(nf):
-        coldata
     cdef np.ndarray[object, ndim=1] cols = np.array([
         X_T[i] for i in xrange(nf)
     ])
@@ -111,14 +111,15 @@ def fit_fm_als(X,
     # Init w0, w, and V.
     cdef double w0 = 0
     cdef np.ndarray[np.double_t, ndim=1] w = np.zeros(nf)
-    cdef np.ndarray[np.double_t, ndim=2] V = np.zeros((nf, k))
+    # cdef np.ndarray[np.double_t, ndim=2] V = np.zeros((nf, k))
+    cdef np.ndarray[np.double_t, ndim=2] V = \
+        np.random.normal(0, init_stdev, (nf, k))
 
     # Precompute e and q.
     cdef np.ndarray[np.double_t, ndim=1] e
     e = predict(X, w0, w, V) - y
 
     cdef np.ndarray[np.double_t, ndim=2] q = np.zeros((nd, k))
-    cdef unsigned int i, j, f
     cdef double x_j
 
     for f in xrange(k):
@@ -132,9 +133,10 @@ def fit_fm_als(X,
     start = time.time()
 
     # define all variables used in main loop.
-    cdef double w0_new, w_new, v_jf, sum_nominator, sum_denominator, diff
+    cdef double w0_new, w_new, v_jf, sum_nominator, sum_denominator
     cdef np.ndarray[np.double_t, ndim=1] h, q_f, v_f, dat
     cdef np.ndarray[np.int32_t, ndim=1] rows
+    cdef double lrate = 0.001
     cdef unsigned int iteration
 
     for iteration in xrange(iters):
@@ -175,7 +177,7 @@ def fit_fm_als(X,
                 sum_nominator = ((v_jf * h - e[rows]) * h).sum()
                 sum_denominator = blas.ddot(h, h)
 
-                v_new = sum_nominator / (sum_denominator + lambda_v)
+                v_new = (sum_nominator / (sum_denominator + lambda_v)) * lrate
                 update = (v_new - v_jf) * dat
                 e[rows]    += update
                 q[rows, f] += update

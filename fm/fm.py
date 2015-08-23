@@ -169,8 +169,6 @@ def read_data(train_file, test_file, conf_file):
     return train_X, train_y, test_X, test_y
 
 
-
-
 def make_parser():
     parser = argparse.ArgumentParser(
         description='BPMLR for non-cold-start dyadic response prediction')
@@ -197,7 +195,7 @@ def make_parser():
         help='upper,lower bound for rating bounding')
     parser.add_argument(
         '-std', '--init-stdev',
-        type=float, default=0.01,
+        type=float, default=0.001,
         help='standard deviation of Gaussian noise initialization for'
              'factorized terms')
     parser.add_argument(
@@ -259,4 +257,6 @@ if __name__ == "__main__":
                           threshold=args.stopping_threshold,
                           k=args.dim,
                           lambda_w=lambda_w,
-                          lambda_v=lambda_v)
+                          lambda_v=lambda_v,
+                          init_stdev=args.init_stdev)
+
