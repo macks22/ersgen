@@ -8,7 +8,7 @@ import scipy as sp
 import seaborn as sns
 from sklearn import preprocessing
 
-from cfm import fit_fm_als
+from cfm import fit_fm_als, predict, rmse_from_err
 
 
 # Error codes
@@ -277,6 +277,18 @@ if __name__ == "__main__":
                           lambda_v=lambda_v,
                           init_stdev=args.init_stdev)
 
+
+    logging.info('making predictions')
+    e = predict(test_X, w0, w, V) - test_y
+    rmse = rmse_from_err(e)
+    print 'FM RMSE:\t%.4f' % rmse
+
+    baseline_pred = np.random.uniform(0, 4, len(test_y))
+    print 'UR RMSE:\t%.4f' % rmse_from_err(baseline_pred - test_y)
+
+    gm_pred = np.repeat(y.mean(), len(test_y))
+    print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
+
     # Calculate feature importance metrics.
     nd, nf = X.shape
     X = abs(X.tocsc())
@@ -321,7 +333,7 @@ if __name__ == "__main__":
           .sort(colname, ascending=False)
 
     deep_blue = sns.color_palette('colorblind')[0]
-    ax = sns.barplot(data=I, x='Importance', y=I.index, color=deep_blue)
+    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
     ax.set(title='Feature Importance for Grade Prediction',
            ylabel='Feature',
            xlabel='Proportion of Deviation From Intercept')

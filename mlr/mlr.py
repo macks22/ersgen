@@ -200,15 +200,16 @@ if __name__ == "__main__":
     # Now calculate importances.
     imp = {k: dev[k] / T for k in dev}
 
+    colname = 'Importance'
     I = pd.DataFrame(imp['W'], index=train.drop(data_keys, axis=1).columns)\
-          .rename(columns={0: 'importance'})
+          .rename(columns={0: colname})
     I.ix[uid] = imp['s']
     I.ix[iid] = imp['c']
-    I = I.sort('importance', ascending=False)
+    I = I.sort(colname, ascending=False)
 
     # Plot feature importance.
     deep_blue = sns.color_palette('colorblind')[0]
-    ax = sns.barplot(data=I, x='Importance', y=I.index, color=deep_blue)
+    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
     ax.set(title='Feature Importance for Grade Prediction',
            ylabel='Feature',
            xlabel='Proportion of Deviation From Intercept')
