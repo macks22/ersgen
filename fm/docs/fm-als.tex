@@ -658,8 +658,8 @@ reformulate slightly:
 %
 Working from (\ref{eq:sigma_2}), we can now compute the inner loop over our $p$
 features using two vectorized operations. Excluding the absolute value
-operations for the moment, we see the numerator is a multiplication of
-two vectors: $X_{d,*} * Z_{l, *}$ and the denominator is a scalar plus a vector:
+operations for the moment, we see the numerator is a multiplication of two
+vectors: $X_{d,*} * Z_{l, *}$ and the denominator is a scalar plus a vector:
 $X_{d,l} + X_{d,*}$. Afterwards we have an elementwise division of the two
 resulting vectors and a sum of all elements. All of these elementwise operations
 can be performed efficiently using GSL, BLAS, or some other scientific
@@ -703,12 +703,8 @@ a copy of X and Z with absolute values already computed.
         \State $Z = |V \cdot V^T|$  \Comment{Precompute $Z$ terms}
         \item[]
 %%
-        \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_1$ for all $j$}
+        \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_1, \sigma_2$ for all $j$}
             \State $\Sigma_1[d,:] = X[d,:] * \bm{w}$
-        \EndFor
-        \item[]
-%%
-        \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_2$ for all $j$}
             \For{$j = \{1, ..., p\}$}
                 \State $\bm{t} = X[d,:] * Z[j,:]$
                 \State $\bm{b} = X[d,j] + X[d,:]$
@@ -720,7 +716,7 @@ a copy of X and Z with absolute values already computed.
 %%
         \State $T = rowsum(\Sigma_1) + rowsum(\Sigma_2)$
             \Comment{Compute $T_d$ terms and $f$}
-        \State $f = \frac{colsum(\Sigma_1) + colsum(\Sigma_2)}{sum(T)}$
+        \State $\bm{f} = \frac{colsum(\Sigma_1) + colsum(\Sigma_2)}{sum(T)}$
 
     \end{algorithmic}
 \end{algorithm}
