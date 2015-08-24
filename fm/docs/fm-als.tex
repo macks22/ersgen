@@ -649,9 +649,10 @@ reformulate slightly:
             \frac{|Z_{l,l}|}{2}
         \right) \\
         &= X_{d,l}^2 \left(  \label{eq:sigma_2}
-            \frac{|X_{d,*} * Z_{l,*}|^{j \times 1}}
-                 {(|X_{d,l}| + |X_{d,*}|)^{j \times 1}} -
-            \frac{|Z_{l,l}|}{2}
+            sum \left(
+                \frac{|X_{d,*} * Z_{l,*}|^{j \times 1}}
+                {(|X_{d,l}| + |X_{d,*}|)^{j \times 1}}
+            \right) - \frac{|Z_{l,l}|}{2}
         \right)
 \end{align}
 %
@@ -660,8 +661,9 @@ features using two vectorized operations. Excluding the absolute value
 operations for the moment, we see the numerator is a multiplication of
 two vectors: $X_{d,*} * Z_{l, *}$ and the denominator is a scalar plus a vector:
 $X_{d,l} + X_{d,*}$. Afterwards we have an elementwise division of the two
-resulting vectors. All of these elementwise operations can be performed
-efficiently using GSL, BLAS, or some other scientific computation library.
+resulting vectors and a sum of all elements. All of these elementwise operations
+can be performed efficiently using GSL, BLAS, or some other scientific
+computation library.
 
 Finally, once we have computed both $\sigma_1$ and $\sigma_2$ for every record,
 the total deviation terms can be computed by adding them. Assume we store the
@@ -673,7 +675,7 @@ importance, we sum the entries of $T$.
 \begin{align}
     T_d &= \sum_{j=1}^p \sigma_1(X_{d,j}) + \sigma_2(X_{d,j})  \\[3mm]
     T   &= rowsum(\Sigma_1) + rowsum(\Sigma_2)  \\[3mm]
-    T*  &= sum(T)
+    T^* &= sum(T)
 \end{align}
 %
 Individual feature importance can now be computed with:
@@ -701,17 +703,17 @@ a copy of X and Z with absolute values already computed.
         \State $Z = |V \cdot V^T|$  \Comment{Precompute $Z$ terms}
         \item[]
 %%
-        \For{$j = \{1, ..., p\}$}  \Comment{Compute $\sigma_1$ for all $j$}
-            \State $\Sigma_1[:,j] = X[:,j] * \bm{w}$
+        \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_1$ for all $j$}
+            \State $\Sigma_1[d,:] = X[d,:] * \bm{w}$
         \EndFor
         \item[]
 %%
         \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_2$ for all $j$}
-            \For{$l = \{1, ..., p\}$}
-                \State $\bm{t} = X[d,:] * Z[l,:]$
-                \State $\bm{b} = X[d,l] + X[d,:]$
-                \State $\Sigma_2[d,j] = X[d,l]^2
-                    (\frac{\bm{t}}{\bm{b}} - \frac{Z[l,l]}{2})$
+            \For{$j = \{1, ..., p\}$}
+                \State $\bm{t} = X[d,:] * Z[j,:]$
+                \State $\bm{b} = X[d,j] + X[d,:]$
+                \State $\Sigma_2[d,j] = X[d,j]^2
+                    (sum(\frac{\bm{t}}{\bm{b}}) - \frac{Z[j,j]}{2})$
             \EndFor
         \EndFor
         \item[]
