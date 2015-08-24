@@ -8,7 +8,7 @@ import scipy as sp
 import seaborn as sns
 from sklearn import preprocessing
 
-from cfm import fit_fm_als, predict, rmse_from_err
+from cfm import fit_fm_als, predict, rmse_from_err, feature_importance
 
 
 # Error codes
@@ -289,35 +289,8 @@ if __name__ == "__main__":
     gm_pred = np.repeat(y.mean(), len(test_y))
     print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
 
-    # Calculate feature importance metrics.
-    nd, nf = X.shape
-    X = abs(X.tocsc())
-    w = abs(w).reshape(w.shape[0], 1)
-    sigma1 = np.zeros((nd, nf))
-    sigma2 = np.zeros((nd, nf))
-    Z = abs(V.dot(V.T))
-
-    # Compute sigma1 and sigma2 for all j.
-    X_T = X.T
-    z_diag = np.diag(Z) / 2
-    for j in xrange(nf):
-        col = X_T[j]
-        dat = col.data[:, np.newaxis]
-        rows = col.indices
-
-        sigma1[rows, j] = np.asarray(dat * w[j]).squeeze()
-
-        col_sq = dat ** 2
-        top = dat * Z[j]
-        bot = dat + X[rows]
-        sigma2[rows, j] = np.asarray(
-            np.multiply(col_sq, ((top / bot).sum(axis=1) - z_diag[j])))\
-                .squeeze()
-
-    # Compute T_d terms and f.
-    T = sigma1.sum(axis=1) + sigma2.sum(axis=1)
-    f = (sigma1.sum(axis=0) + sigma2.sum(axis=0)) / T.sum()
-    assert(np.isclose(f.sum(), 1.0))
+    # Calculate feature importance.
+    f = feature_importance(X, w, V)
 
     # Finally, combine one-hot encoded importances to get final importances.
     I = {}

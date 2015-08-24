@@ -201,3 +201,45 @@ def fit_fm_als(X,
 
     return w0, w, V
 
+
+def feature_importance(X,
+                       np.ndarray[np.double_t, ndim=1] w,
+                       np.ndarray[np.double_t, ndim=2] V):
+    """Calculate feature importance metrics."""
+
+    nd, nf = X.shape
+    X = abs(X.tocsc())
+    w = abs(w)
+
+    cdef np.ndarray[np.double_t, ndim=2] sigma1, sigma2, Z, top, bot, dat
+    sigma1 = np.zeros((nd, nf))
+    sigma2 = np.zeros((nd, nf))
+    Z = abs(V.dot(V.T))
+
+    # Compute sigma1 and sigma2 for all j.
+    cdef np.ndarray[np.double_t, ndim=1] z_diag, T, f
+    cdef np.ndarray[np.int32_t, ndim=1] rows
+    cdef unsigned int j
+
+    X_T = X.T
+    z_diag = np.diag(Z) / 2
+    for j in xrange(nf):
+        col = X_T[j]
+        dat = col.data[:, np.newaxis]
+        rows = col.indices
+
+        sigma1[rows, j] = np.asarray(dat * w[j]).squeeze()
+
+        col_sq = dat ** 2
+        top = dat * Z[j]
+        bot = dat + X[rows]
+        sigma2[rows, j] = np.asarray(
+            np.multiply(col_sq, ((top / bot).sum(axis=1) - z_diag[j])))\
+                .squeeze()
+
+    # Compute T_d terms and f.
+    T = sigma1.sum(axis=1) + sigma2.sum(axis=1)
+    f = (sigma1.sum(axis=0) + sigma2.sum(axis=0)) / T.sum()
+    assert(np.isclose(f.sum(), 1.0))
+
+    return f
