@@ -177,7 +177,7 @@ features corresponding to the rating $R_{i, j}$. Here $p = |\bm{q}_i| +
 observe ratings for the dyads corresponding to $S$, we assign each dyad $(i, j)
 \in S$ its own unique dyad-specific index $d = {1, ..., O}$ using a mapping
 function $id-map: (i, j) \rightarrow d$ subject to $d \in \mathbb{I}, d > 0$.
-Since we use this mapping extensively, we define $O = O$ to be the number of
+Since we use this mapping extensively, we define $|S| = O$ to be the number of
 observed ratings. So $d = {1, ..., O}$. We place the observed dyads $\bm{D}_{i,
 j}: (i, j) \in S$ in a matrix of feature vectors $X^{O \times p}$ and the
 observed ratings in a vector $\bm{y}^{O \times 1}$, s.t. $X_d^{p \times 1}$
@@ -279,7 +279,7 @@ This result gives us the form of the FM equation we intend to optimize:
 \section{Alternating Least Squares Algorithm}
 
 There are a variety of ways to optimize the FM model equation defined in
-(\ref{eq:fm-linear}). These are summarized in \ref{rendle_factorization_2012}
+(\ref{eq:fm-linear}). These are summarized in \cite{rendle_factorization_2012}
 and include Stochastic Gradient Descent (SGD), SGD with adaptive regularization,
 Alternating Least Squares (ALS) aka Coordinate Descent, and Markov Chain Monte
 Carlo (MCMC). In this paper, we are interested in the ALS algorithm for
@@ -351,8 +351,8 @@ allows fast optimization.
     a linear model $\hat{y}(X_d| \Theta \ {\theta})$ is:
 %%
     \begin{equation}
-        \theta = \frac{ \sum_{d=1}^{O} (g_\theta(X_d) - y_d) h_\theta(X_d) }
-                      { \sum_{d=1}^{O} h^2_\theta(X_d) + \lambda_\theta }
+        \theta = - \frac{ \sum_{d=1}^{O} (g_\theta(X_d) - y_d) h_\theta(X_d) }
+                        { \sum_{d=1}^{O} h^2_\theta(X_d) + \lambda_\theta }
     \end{equation}
 \end{lemma}
 
@@ -453,9 +453,133 @@ The ALS algorithm is as follows:
   \end{algorithmic}
 \end{algorithm}
 
+\section{Feature Importance}
 
+Inspired by the work of Elbadrawy et al. in \cite{elbadrawy_personalized_2015},
+we have derived formulas for computing the importance of each feature. Since the
+model does not have non-negativity constraints, we cannot define these
+importance metrics simply as the proportion of the overall prediction normalized
+over all records. Instead, we consider the intuitive notion of proportion of the
+absolute deviation from the global intercept term as a measure of importance.
+Let us consider a particular example to motivate this idea.
+
+Assume we have three features: a user id, an item id, and a season (Spring,
+Summer, Fall, Winter). We one-hot encode all features, so for a particular
+record we have three features with a value of 1 and all the rest have values of
+0. Now the goal is to predict the response a particular user gives to a
+particular item during a particular season. Let us now fixate upon a single
+user. This user generally tends to give all items a slightly positive response.
+The responses are more positive in the Spring and Fall, and less positive in the
+Summer and Winter. Next we fix our sights upon a single item. This item usually
+generates very positive responses, with the positivity spiking in the Summer.
+The other seasons have no effect on users' responses to the item. The user has
+no unusual feelings about the item. We also observe the overall pattern of
+responses is slightly positive and the range of ratings is from 0 to 4. Finally,
+we do not observe any general seasonality effects. We only find seasonal
+preferences of and for particular users and items.
+
+Given this setting, we can now assign hypothetical values to our parameters. We
+have 10 users and 20 items, and there are 4 seasons. So after one-hot encoding,
+we have a total of 34 features. Let our user be feature 1, our item be feature
+11, and the seasons are then the following feature numbers: Spring = 31, Summer
+= 32, Fall = 33, Winter = 34. As is typical with regression models, we set
+feature 0 to 1 for all records to learn the global intercept term.
+
+\begin{itemize}
+    \item  $w_0    = 0.5$, a positive global intercept term.
+    \item  $w_1    = 0.5$, a positive reponse trend for this user.
+    \item  $w_{11} = 2.0$, a very positive response trend for this item.
+    \item  $Z_{1,31} = Z_{1,33} =  0.2$, this user has slightly more positive
+        responses in Spring and Fall.
+    \item  $Z_{1,32} = Z_{1,34} = -0.2$, this user has slightly less positive
+        responses in Summer and Winter.
+    \item  $Z_{11,32} = 0.2$, this item has slightly more positive responses in
+        the Summer.
+\end{itemize}
+%
+With these parameter values, a prediction for this user-item combo in the Summer
+would be calculated as:
+%
+\begin{align}
+    \hat{y}(X_d) \begin{aligned}[t]
+         &= w_0 + w_1 + w_{11} + Z_{1,32} + Z_{11,32}  \\
+         &= 0.5 + 0.5 + 2.0 - 0.2 + 0.2  \\
+         &= 3.0
+    \end{aligned}
+    \nonumber
+\end{align}
+%
+And the importance of each feature would be calculated as:
+%
+\begin{equation} \label{eq:importance-single-dyad}
+    I(X_{d,l}) = \frac{\sigma_1(X_{d,l}) + \sigma_2(X_{d,l})}{T_d},
+\end{equation}
+%
+where $\sigma_1(X_{d,l})$ is the deviation from 1-way interactions of feature $l$ in
+dyad $d$, $\sigma_2(X_{d,l})$ is the deviation from 2-way interactions of feature $l$
+in dyad $d$, and $T_d$ is the total deviation from the global intercept $w_0$ in
+the estimation for dyad $d$.
+
+\begin{align}
+    \sigma_1(X_{d,l})
+        &= |w_l X_{d,l}|  \\
+    \sigma_2(X_{d,l})
+        &= X_{d,l}^2 \sum_{j=1, j \neq l}^p
+            \frac{|X_{d,j} Z_{l,j}|}
+                 {|X_{d,l}| + |X_{d,j}|}  \\
+    T_d
+        &= \sum_{j=1}^p |w_j X_{d,j}| +
+            \sum_{j=1}^p \sum_{j'=j+1}^p
+                |X_{d,j} X_{d,j'} Z_{j,j'}|
+\end{align}
+%
+Recall that we have three features set to 1 for each dyad feature vector $X_d$.
+So we calculate the importance of these three features using
+(\ref{eq:importance-single-dyad}).
+%
+\begin{align*}
+    T_d
+        &= |w_1| + |w_{11}| + |Z_{1,32}| + |Z_{11,32}|  \\
+        &= |0.5| + |2.0| + |-0.2| + |0.2| = 2.9  \\[3mm]
+%%
+    I(X_{d,1})
+        &= \frac{|w_1| + |Z_{1,32}| / 2}{T_d}  \\
+        &= \frac{|0.5| + |-0.2| / 2}{2.9}
+        = \frac{0.6}{2.9} \approx 0.2069  \\[3mm]
+%%
+    I(X_{d,11})
+        &= \frac{|w_{11}| + |Z_{11,32}| / 2}{T_d}  \\
+        &= \frac{|2.0| + |0.2| / 2}{2.9}
+        = \frac{2.1}{2.9} \approx 0.7241  \\[3mm]
+%%
+    I(X_{d,32})
+        &= \frac{|Z_{1,32}| / 2 + |Z_{11,32}| / 2}{T_d}  \\
+        &= \frac{|-0.2| / 2 + |0.2| / 2}{2.9}
+         = \frac{0.2}{2.9} \approx 0.0690  \\
+\end{align*}
+
+Having worked through this example, we now make several observations about the
+properties of the importance metrics defined so far.
+
+\begin{itemize}
+    \item  $\sum_{j=1}^p I(X_{d,j}) = T_d$. The sum of the importance measures
+        of all features for a dyad equals the total deviation for that dyad.
+    \item  We can calculate the overall importance of a feature in our training
+        dataset through:
+        \begin{equation}
+            I(X_{*,j}) = \sum_{d=1}^O I(X_{d,j})
+        \end{equation}
+    \item  Calculation of the overall importance measures for all features is a
+        $\bm{O}(O(p^2 + k))$ operation if we precompute the $Z$ terms.
+\end{itemize}
+
+
+%%
+%% BIBLIOGRAPHY
+%%
 \bibliographystyle{siam}
 \bibliography{refs}
+
 
 \end{document}
 
