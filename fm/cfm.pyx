@@ -115,7 +115,7 @@ def fit_fm_als(X,
     cdef np.ndarray[np.double_t, ndim=2] V = \
         np.random.normal(0, init_stdev, (nf, k))
 
-    # Precompute e and q.
+    # Precompute e and q caches.
     cdef np.ndarray[np.double_t, ndim=1] e
     e = predict(X, w0, w, V) - y
 

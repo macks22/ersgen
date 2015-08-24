@@ -7,6 +7,7 @@ import argparse
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from sklearn import preprocessing
 
 from cmlr import compute_rmse, fit_mlr, rmse_from_err
@@ -203,12 +204,12 @@ if __name__ == "__main__":
           .rename(columns={0: 'importance'})
     I.ix[uid] = imp['s']
     I.ix[iid] = imp['c']
-    I = I.sort('importance')
+    I = I.sort('importance', ascending=False)
 
     # Plot feature importance.
-    ax = I.plot(kind='barh')
-    ax.set_title('Feature Importance for Grade Prediction')
-    ax.set_ylabel('Feature')
-    ax.set_xlabel('Proportion of Deviation From Intercept')
-    ax.legend().draggable(True)
+    deep_blue = sns.color_palette('colorblind')[0]
+    ax = sns.barplot(data=I, x='Importance', y=I.index, color=deep_blue)
+    ax.set(title='Feature Importance for Grade Prediction',
+           ylabel='Feature',
+           xlabel='Proportion of Deviation From Intercept')
     ax.figure.show()

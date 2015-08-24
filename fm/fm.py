@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import scipy as sp
+import seaborn as sns
 from sklearn import preprocessing
 
 from cfm import fit_fm_als
@@ -157,16 +158,32 @@ def read_data(train_file, test_file, conf_file):
     train_cats = enc_cats[:nd_train]
     test_cats = enc_cats[nd_train:]
 
+    # Create a feature map for decoding one-hot encoding.
+    nreal = train_reals.shape[1]
+    ncats = encoder.active_features_.shape[0]
+    nf = nreal + ncats
+
+    counts = np.array([
+        all_cats[cats[i]].unique().shape[0]
+        for i in xrange(len(cats))
+    ])
+    indices = zip(cats, np.cumsum(counts))
+    indices += zip(reals, range(indices[-1][1] + 1, nf + 1))
+
     logging.info('after one-hot encoding, found # unique values:')
-    for attr, n_values in zip(cats, encoder.n_values_):
+    for attr, n_values in zip(cats, counts):
         logging.info('%s: %d' % (attr, n_values))
+
+    logging.info('number of active categorical features: %d of %d' % (
+        ncats, encoder.n_values_.sum()))
+    logging.info('number of real-valued features: %d' % nreal)
 
     # Put all features together.
     train_X = sp.sparse.hstack((train_cats, train_reals))
     test_X = sp.sparse.hstack((test_cats, test_reals))
-    logging.info('Total of %d features after encoding' % train_X.shape[1])
+    logging.info('Total of %d features after encoding' % nf)
 
-    return train_X, train_y, test_X, test_y
+    return train_X, train_y, test_X, test_y, indices
 
 
 def make_parser():
@@ -240,7 +257,7 @@ if __name__ == "__main__":
 
     logging.info('reading train/test files')
     try:
-        X, y, test_X, test_y = read_data(
+        X, y, test_X, test_y, f_indices = read_data(
             args.train, args.test, args.feature_guide)
         errno = None
     except IOError as e:
@@ -260,3 +277,52 @@ if __name__ == "__main__":
                           lambda_v=lambda_v,
                           init_stdev=args.init_stdev)
 
+    # Calculate feature importance metrics.
+    nd, nf = X.shape
+    X = abs(X.tocsc())
+    w = abs(w).reshape(w.shape[0], 1)
+    sigma1 = np.zeros((nd, nf))
+    sigma2 = np.zeros((nd, nf))
+    Z = abs(V.dot(V.T))
+
+    # Compute sigma1 and sigma2 for all j.
+    X_T = X.T
+    z_diag = np.diag(Z) / 2
+    for j in xrange(nf):
+        col = X_T[j]
+        dat = col.data[:, np.newaxis]
+        rows = col.indices
+
+        sigma1[rows, j] = np.asarray(dat * w[j]).squeeze()
+
+        col_sq = dat ** 2
+        top = dat * Z[j]
+        bot = dat + X[rows]
+        sigma2[rows, j] = np.asarray(
+            np.multiply(col_sq, ((top / bot).sum(axis=1) - z_diag[j])))\
+                .squeeze()
+
+    # Compute T_d terms and f.
+    T = sigma1.sum(axis=1) + sigma2.sum(axis=1)
+    f = (sigma1.sum(axis=0) + sigma2.sum(axis=0)) / T.sum()
+    assert(np.isclose(f.sum(), 1.0))
+
+    # Finally, combine one-hot encoded importances to get final importances.
+    I = {}
+    prev = 0
+    for i in xrange(len(f_indices)):
+        fname, last = f_indices[i]
+        I[fname] = f[prev: last].sum()
+        prev = last
+
+    # Plot feature importance.
+    colname = 'Importance'
+    I = pd.DataFrame(I.values(), index=I.keys(), columns=[colname])\
+          .sort(colname, ascending=False)
+
+    deep_blue = sns.color_palette('colorblind')[0]
+    ax = sns.barplot(data=I, x='Importance', y=I.index, color=deep_blue)
+    ax.set(title='Feature Importance for Grade Prediction',
+           ylabel='Feature',
+           xlabel='Proportion of Deviation From Intercept')
+    ax.figure.show()
