@@ -393,25 +393,45 @@ allows fast optimization.
 
 \subsection{Fast Computation}
 
+In order to speed up computation from $\bm{O}(Op^2k)$ to $\bm{O}(Opk)$, we
+precompute two caches:
+%
+\begin{align}
+    e_d &= \hat{y_d} - y_d  \\
+    q_{d,f} &= \sum_{j=1}^p X_{d,j} V_{j,f}
+\end{align}
+%
+Precomputing the $e$ cache prevents recomputing the error for each individual
+dyad during training. Precomputing the $q$ cache allows us to compute the
+$h$-terms in constant time using:
+%
+\begin{equation}
+    h_{V_{j,f}}(X_d) = X_{d,j} (q_{d,f} - V_{j,f} X_{d,j})
+\end{equation}
+%
+With these improvements, we now outline the ALS algorithm in
+Algorithm~\ref{alg:fm-als}.
 
-\subsection{Algorithm}
-
-The ALS algorithm is as follows:
 
 \begin{algorithm}
-\caption{FM-ALS($X, y, \lambda_w, \lambda_V, \sigma$, stopping-threshold)}
+  \caption{FM-ALS($X, y, \lambda_w, \lambda_V, \sigma, \epsilon$)}
+  \label{alg:fm-als}
   \begin{algorithmic}[1]
     \State $w0 = 0$  \Comment{Initialize parameters}
     \State $\bm{w} = (0, ..., 0)$
     \State $V \sim \mathcal{N}(0, \sigma)$
+    \State $mse = 0$
     \For{$d = \{1, ..., O\}$}  \Comment{Precompute e and q terms}
         \State $e[d] = PREDICT(X[d], w0, w, V) - y[d]$
+        \State $mse \pluseq e[d] * e[d]$
         \For{$f = \{1, ..., k\}$}
             \For{$j = \{1, ..., p\}$}
                 \State $q[d, f] \pluseq V[j,f] * X[d,j]$
             \EndFor
         \EndFor
     \EndFor
+    \State $mse = mse / O$
+    \State $prev\_rmse = sqrt(mse)$
     \item[]
 %%
     \Repeat  \Comment{Main optimization loop}
@@ -449,7 +469,11 @@ The ALS algorithm is as follows:
                 \State $V[j,f] = v\_new$
             \EndFor
         \EndFor
-    \Until improvement $<$ stopping-threshold
+        \item[]
+%%
+        % Perform stopping check
+        \State $rmse = sqrt(sum(e^2))$  \Comment{Prepare for stopping check}
+    \Until ($prev\_rmse - rmse) < \epsilon$
   \end{algorithmic}
 \end{algorithm}
 
@@ -459,9 +483,15 @@ Inspired by the work of Elbadrawy et al. in \cite{elbadrawy_personalized_2015},
 we have derived formulas for computing the importance of each feature. Since the
 model does not have non-negativity constraints, we cannot define these
 importance metrics simply as the proportion of the overall prediction normalized
-over all records. Instead, we consider the intuitive notion of proportion of the
-absolute deviation from the global intercept term as a measure of importance.
-Let us consider a particular example to motivate this idea.
+over all records. Instead, we seek a quantity inspired by mean absolute
+deviation. For each dyad, the active features are involved in one or more
+additive interaction terms. The absolute values of these additive terms can be
+considered absolute deviations from the global intercept $w_0$. To measure
+importance, we sum the additive terms for a particular feature and divide by the
+total deviations caused by all terms. So importance is measured as the
+proportion of the absolute deviation from the global intercept term accounted
+for by a particular feature. Let us consider a particular example to motivate
+better understand this idea.
 
 Assume we have three features: a user id, an item id, and a season (Spring,
 Summer, Fall, Winter). We one-hot encode all features, so for a particular
@@ -570,8 +600,128 @@ properties of the importance metrics defined so far.
             I(X_{*,j}) = \sum_{d=1}^O I(X_{d,j})
         \end{equation}
     \item  Calculation of the overall importance measures for all features is a
-        $\bm{O}(O(p^2 + k))$ operation if we precompute the $Z$ terms.
+        \sloppy{$\bm{O}(O(p^2 + k))$} operation if we precompute the $Z$ terms.
 \end{itemize}
+
+
+\subsection{Efficient Importance Computation}
+
+The anticipated use of feature importance is qualitative analysis in an offline
+setting. So the polynomial complexity is not especially troubling and heuristics
+for estimation of these quantities will not be devised at this time. However, it
+is still advantageous to think ahead towards an efficient vectorized procedure
+for computing feature importance. We can break down the computation into
+computation of the:
+
+\begin{itemize}
+    \item  $Z$ terms,
+    \item  $\sigma_1$ 1-way interaction deviations,
+    \item  $\sigma_2$ 2-way interaction deviations,
+    \item  and the $T_d$ total absolute deviations.
+\end{itemize}
+
+The first computation is a simple dot product: $Z^{p \times p} = V V^T$.
+Computation of $\sigma_1$ requires multiplying the vector $\bm{w}^{p \times 1}$
+by each row of the training data $X^{O \times p}$. If using a dense matrix
+representation for $X$, this is often trivial. In Python's `numpy` library, it
+can be handled by a single multiplication operation with the help of numpy's
+broadcasting. However, if a sparse representation such as compressed storage row
+(CSR) format is being used, the operation will likely require looping over the
+rows.
+
+Computation of $\sigma_2$ is more involved. We can vectorize it if we
+reformulate slightly:
+%
+\begin{align}
+    \sigma_2(X_{d,l})
+        &= X_{d,l}^2 \sum_{j=1, j \neq l}^p
+            \frac{|X_{d,j} Z_{l,j}|}
+                 {|X_{d,l}| + |X_{d,j}|}  \\
+        &= X_{d,l}^2 \sum_{j=1}^p
+            \frac{|X_{d,j} Z_{l,j}|}
+                 {|X_{d,l}| + |X_{d,j}|} -
+             X_{d,l}^2 \frac{|X_{d,l} Z_{l,l}|}
+                            {|X_{d,l}| + |X_{d,l}|}  \\
+        &= X_{d,l}^2 \left(
+            \sum_{j=1}^p
+                \frac{|X_{d,j} Z_{l,j}|}
+                     {|X_{d,l}| + |X_{d,j}|} -
+            \frac{|Z_{l,l}|}{2}
+        \right) \\
+        &= X_{d,l}^2 \left(  \label{eq:sigma_2}
+            \frac{|X_{d,*} * Z_{l,*}|^{j \times 1}}
+                 {(|X_{d,l}| + |X_{d,*}|)^{j \times 1}} -
+            \frac{|Z_{l,l}|}{2}
+        \right)
+\end{align}
+%
+Working from (\ref{eq:sigma_2}), we can now compute the inner loop over our $p$
+features using two vectorized operations. Excluding the absolute value
+operations for the moment, we see the numerator is a multiplication of
+two vectors: $X_{d,*} * Z_{l, *}$ and the denominator is a scalar plus a vector:
+$X_{d,l} + X_{d,*}$. Afterwards we have an elementwise division of the two
+resulting vectors. All of these elementwise operations can be performed
+efficiently using GSL, BLAS, or some other scientific computation library.
+
+Finally, once we have computed both $\sigma_1$ and $\sigma_2$ for every record,
+the total deviation terms can be computed by adding them. Assume we store the
+resulting values in $O \times p$ matrices $\Sigma_1$ and $\Sigma_2$. We use
+vectorized row sum operations followed by elementwise addition. Finally, since
+our goal is to compute overall importance metrics rather than per-dyad
+importance, we sum the entries of $T$.
+%
+\begin{align}
+    T_d &= \sum_{j=1}^p \sigma_1(X_{d,j}) + \sigma_2(X_{d,j})  \\[3mm]
+    T   &= rowsum(\Sigma_1) + rowsum(\Sigma_2)  \\[3mm]
+    T*  &= sum(T)
+\end{align}
+%
+Individual feature importance can now be computed with:
+%
+\begin{align}
+    I(j) &= \frac{\Sigma_1[:, j] + \Sigma_2[:, j]}{T*}  \\[3mm]
+    I    &= \frac{colsum(\Sigma_1) + colsum(\Sigma_2)}{T*}
+\end{align}
+%
+
+Having explored the pieces of our feature importance computation, we present FM
+feature importance (FM-FI) algorithm in Algorithm~\ref{alg:fm-fi}. We store the
+feature importances in a vector $\bm{f}$. To avoid repeated operations, we store
+a copy of X and Z with absolute values already computed.
+
+\begin{algorithm}
+    \caption{FM-FI($X, \bm{w}, V$)}
+    \label{alg:fm-fi}
+    \begin{algorithmic}[1]
+        \State $X = |X|$  \Comment{Take absolutes and init memory}
+        \State $\bm{w} = |\bm{w}|$
+        \State $\bm{f} = \bm{0}^{j x 1}$
+        \State $\Sigma_1 = \bm{0}^{O \times p}$
+        \State $\Sigma_2 = \bm{0}^{O \times p}$
+        \State $Z = |V \cdot V^T|$  \Comment{Precompute $Z$ terms}
+        \item[]
+%%
+        \For{$j = \{1, ..., p\}$}  \Comment{Compute $\sigma_1$ for all $j$}
+            \State $\Sigma_1[:,j] = X[:,j] * \bm{w}$
+        \EndFor
+        \item[]
+%%
+        \For{$d = \{1, ..., O\}$}  \Comment{Compute $\sigma_2$ for all $j$}
+            \For{$l = \{1, ..., p\}$}
+                \State $\bm{t} = X[d,:] * Z[l,:]$
+                \State $\bm{b} = X[d,l] + X[d,:]$
+                \State $\Sigma_2[d,j] = X[d,l]^2
+                    (\frac{\bm{t}}{\bm{b}} - \frac{Z[l,l]}{2})$
+            \EndFor
+        \EndFor
+        \item[]
+%%
+        \State $T = rowsum(\Sigma_1) + rowsum(\Sigma_2)$
+            \Comment{Compute $T_d$ terms and $f$}
+        \State $f = \frac{colsum(\Sigma_1) + colsum(\Sigma_2)}{sum(T)}$
+
+    \end{algorithmic}
+\end{algorithm}
 
 
 %%
