@@ -290,23 +290,23 @@ if __name__ == "__main__":
     print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
 
     # Calculate feature importance.
-    f = feature_importance(X, w, V)
+    # f is overall, f1 from 1-way interactions, and f2 from 2-way.
+    f, f1, f2 = feature_importance(X, w, V)
 
     # Finally, combine one-hot encoded importances to get final importances.
-    I = {}
+    I = {'Importance': {}, '1way': {}, '2way': {}}
     prev = 0
+    tmp1 = '%s_1'
+    tmp2 = '%s_2'
     for i in xrange(len(f_indices)):
         fname, last = f_indices[i]
-        I[fname] = f[prev: last].sum()
+        I['Importance'][fname] = f[prev: last].sum()
+        I['1way'][fname] = f1[prev: last].sum()
+        I['2way'][fname] = f2[prev: last].sum()
         prev = last
 
-    # Plot feature importance.
-    colname = 'Importance'
-    I = pd.DataFrame(I.values(), index=I.keys(), columns=[colname])\
-          .sort(colname, ascending=False)
-
-    deep_blue = sns.color_palette('colorblind')[0]
-    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+    I = pd.DataFrame(I).sort('Importance')
+    ax = I[['2way', '1way']].plot(kind='barh', stacked=True)
     ax.set(title='Feature Importance for Grade Prediction',
            ylabel='Feature',
            xlabel='Proportion of Deviation From Intercept')

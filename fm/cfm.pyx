@@ -217,7 +217,7 @@ def feature_importance(X,
     Z = abs(V.dot(V.T))
 
     # Compute sigma1 and sigma2 for all j.
-    cdef np.ndarray[np.double_t, ndim=1] z_diag, T, f
+    cdef np.ndarray[np.double_t, ndim=1] z_diag, T, f, f1, f2
     cdef np.ndarray[np.int32_t, ndim=1] rows
     cdef unsigned int j
 
@@ -239,7 +239,9 @@ def feature_importance(X,
 
     # Compute T_d terms and f.
     T = sigma1.sum(axis=1) + sigma2.sum(axis=1)
-    f = (sigma1.sum(axis=0) + sigma2.sum(axis=0)) / T.sum()
+    f1 = sigma1.sum(axis=0) / T.sum()
+    f2 = sigma2.sum(axis=0) / T.sum()
+    f = f1 + f2
     assert(np.isclose(f.sum(), 1.0))
 
-    return f
+    return f, f1, f2
