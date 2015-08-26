@@ -1,4 +1,5 @@
 import os
+import shutil
 import logging
 
 try:
@@ -134,11 +135,19 @@ def map_ids(data, key):
     return n
 
 
-def save_np_vars(vars, savedir):
+def save_np_vars(vars, savedir, ow=False):
     """Save a dictionary of numpy variables to `savedir`. We assume
     the directory does not exist; an OSError will be raised if it does.
+    If `ow` is True, overwrite `savedir` if it exists.
     """
     logging.info('writing numpy vars to directory: %s' % savedir)
+    if ow:
+        try:
+            shutil.rmtree(savedir)
+            logging.info('overwrote old directory')
+        except OSError:
+            pass
+
     os.mkdir(savedir)
     shapes = {}
     for varname in vars:
