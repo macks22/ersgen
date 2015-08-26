@@ -259,6 +259,7 @@ if __name__ == "__main__":
         format="[%(asctime)s]: %(message)s")
 
     data = adhoc_gen(args.nstudents, args.ncourses, args.nterms)
+    data[np.isinf(data)] = 0  # hack for now.
     if args.output:
         fname = 'data-n%d-m%d-t%d-d%d-%s.csv' % (
             args.nstudents, args.ncourses, args.nterms, len(data), tsnow())
