@@ -2,7 +2,7 @@
 An implementation of the Bayesian formulation of the Personalized Multi-Linear
 Regression (PMLR) model: Bayesian PMLR (BPMRL).
 
-NON-PERSONALIZED VERSION.
+NO BIAS TERMS.
 
 NOTE: the gamma distribution in numpy uses the shape/scale parameterization. So
 whenever we use np.random.gamma, we use shape=alpha, scale=(1/beta).
@@ -42,16 +42,35 @@ def solve(X):
         return L
 
 
-def predict(alpha_G, p, W, X):
+def map_ids(data, key, id_map=None):
+    """Map ids to 0-contiguous index. This enables the use of these ids as
+    indices into an array (for the bias terms, for instance). This returns the
+    number of unique IDs for `key`.
+    """
+    if id_map is None:
+        ids = data[key].unique()
+        n = len(ids)
+        id_map = dict(zip(ids, range(n)))
+    else:
+        data[key] = data[key].apply(lambda _id: id_map[_id])
+    return id_map
+
+
+def predict(alpha_G, P, W, X, uids, bounds=(0, 4)):
     """Make predictions using BPMLR given parameters.
     Assumes features have already been scaled appropriately.
     """
+    # lo, hi = bounds
+    membs = P[uids]
 
-    means = p.reshape(1, L).dot(W).dot(X.T)[0]
+    means = np.sum(membs.dot(W) * X, 1)
+    sigma_G = np.sqrt(1.0 / alpha_G)
     predictions = np.array([
-        np.random.normal(means[i], alpha_G)
+        np.random.normal(means[i], sigma_G)
         for i in xrange(X.shape[0])
     ])
+    # predictions[predictions < lo] = lo
+    # predictions[predictions > hi] = hi
     return predictions
 
 
@@ -138,22 +157,35 @@ if __name__ == "__main__":
                 print 'key %s not in %s dataset' % (key, name)
                 sys.exit(MISSING_ATTRIBUTE)
 
+    # Map uid and iid to 0-contiguous indices
+    uid_map = map_ids(train, uid)
+    iid_map = map_ids(train, iid)
+    map_ids(test, uid, uid_map)
+    map_ids(test, iid, iid_map)
+
     # Split up training/test data.
+    uids = train[uid].values
+    iids = train[iid].values
     y = train[target].values
     X = train.drop([uid, iid, target], axis=1).values
 
+    test_uids = test[uid].values
+    test_iids = test[iid].values
     test_y = test[target].values
     test_X = test.drop([uid, iid, target], axis=1).values
 
+    uniq_uids = np.unique(uids)
+    uniq_iids = np.unique(iids)
+
     # Get various counts for logging.
-    N = train[uid].unique().shape[0]
-    M = train[iid].unique().shape[0]
+    N = uniq_uids.shape[0]
+    M = uniq_iids.shape[0]
     L = args.nmodels
 
     nd_train = train.shape[0]
     nd_test = test.shape[0]
     nd = nd_train + nd_test
-    nf = X.shape[1]
+    nf = train.columns.shape[0] - 3  # ignore uid, iid, target
 
     logging.info('N=%d, M=%d, L=%d' % (N, M, L))
     logging.info('# dyads: train=%d, test=%d, total=%d' % (
@@ -168,11 +200,12 @@ if __name__ == "__main__":
     # Init G precision.
     alpha_G = 2
 
-    # Init p hyparparams.
-    mu0_p = 0
-    alpha0_p = 1
-    beta0_p = 1
-    k0_p = 1
+    # Init P hyparparams.
+    mu0_P = np.zeros(L)
+    df0_P = L
+    alpha_P = np.ones(L) * 2
+    W0_P = np.eye(L)
+    k0_P = 1
 
     # Init W hyperparams.
     mu0_W = np.zeros(nf)
@@ -183,29 +216,29 @@ if __name__ == "__main__":
 
     if args.warm_start:
         model = load_np_vars(args.warm_start)
-        p = model['p']
+        P = model['p']
         W = model['W']
 
         # Init params from loaded model.
-        mu_p = model.get('mu_p', p.mean(axis=0))
-        alpha_p = model.get('alpha_p', 1.0 / p.var(ddof=1))
+        mu_P = model.get('mu_P', P.mean(axis=0))
+        lambda_P = model.get('lambda_P', np.linalg.inv(cov(P)))
 
         mu_W = model.get('mu_W', W.mean(axis=0))
         lambda_W = model.get('lambda_W', np.linalg.inv(cov(W)))
 
     else:
         # Init params using hyperparams.
-        alpha_p = np.random.gamma(alpha0_p, 1.0 / beta0_p)
-        sigma_p = np.sqrt(1.0 / alpha_p)
-        mu_p = np.random.normal(mu0_p, sigma_p)
+        lambda_P = np.eye(L) * alpha_P
+        covar_P = np.linalg.inv(lambda_P * k0_P)
+        mu_P = np.random.multivariate_normal(mu0_P, covar_P)
 
-        alpha_W = np.diag(wishart.rvs(df0_W, W0_W))
+        # lambda_W = wishart.rvs(df0_W, W0_W)
         lambda_W = np.eye(nf) * alpha_W
         covar_W = np.linalg.inv(lambda_W * k0_W)
         mu_W = np.random.multivariate_normal(mu0_W, covar_W)
 
         # Init vars using params.
-        p = np.random.normal(mu_p, sigma_p, L)
+        P = np.random.multivariate_normal(mu_P, covar_P, N)
         W = np.random.multivariate_normal(mu_W, covar_W, L)
 
     # Calculate initial predictions.
@@ -213,23 +246,24 @@ if __name__ == "__main__":
     nsamples = args.nsamples - args.burnin
     predictions = np.ndarray((nsamples + 1, nd_train))
 
-    initial = predict(alpha_G, p, W, test_X)
-    prev_rmse = np.sqrt(((initial - test_y) ** 2).sum() / test_y.shape[0])
+    initial = predict(alpha_G, P, W, X, uids, (0, 4))
+    prev_rmse = np.sqrt(((initial - y) ** 2).sum() / y.shape[0])
     print 'initial RMSE: %.4f' % prev_rmse
 
     # Create space to store gibbs samples.
     dim = lambda mat: [args.nsamples + 1] + list(mat.shape)
     params = {}
 
-    for var in ['p', 'W', 'lambda_W', 'mu_W']:
+    for var in ['P', 'W']:
         val = globals()[var]
         params[var] = np.ndarray(dim(val))
         params[var][0] = val
 
-    for param in ['alpha_p', 'mu_p']:
+    for param in ['lambda_P', 'mu_P', 'lambda_W', 'mu_W']:
         val = globals()[param]
-        params[param] = np.ndarray(args.nsamples + 1)
+        params[param] = np.ndarray(dim(val))
         params[param][0] = val
+
 
     sample = 0
     def update(param):
@@ -241,80 +275,84 @@ if __name__ == "__main__":
         logging.info('sample %d' % sample)
         for sub_sample in xrange(args.thin):
 
-            # Update p hyperparams...
-            p_mean = p.mean()
-            k_post = k0_p + L
-            beta_post = (beta0_p +
-                0.5 * ((L * p.var()) +
-                       (L * k0_p) * ((p_mean - mu0_p) ** 2) / k_post))
+            # Update P hyperparams...
+            k_post = k0_P + N
+            P_bar = P.mean(axis=0)
+            S_bar = cov(P)
 
-            mu_post = (k0_p * mu0_p + L * p_mean) / k_post
-            alpha_post = alpha0_p + (L / 2.)
+            mu_tmp = mu0_P - P_bar
+            W_post = np.linalg.inv(
+                np.linalg.inv(W0_P) + (N * S_bar) +
+                (k0_P * N) * mu_tmp.dot(mu_tmp.T) / k_post)
+
+            df_post = df0_P + N
+            # mu_post = (k0_P * mu0_P + N * P_bar) / k_post
 
             # ...and params.
-            alpha_p = np.random.gamma(alpha_post, 1.0 / beta_post)
-            sigma_p = np.sqrt(1.0 / (k0_p * alpha_p))
-            # mu_p = np.random.normal(mu0_p, sigma_p)
-            mu_p = np.random.normal(mu_post, sigma_p)
+            alpha_P = np.diag( wishart.rvs(df_post, W_post))
+            lambda_P = np.eye(L) * alpha_P
+            covar_P = np.linalg.inv(k_post * lambda_P)
+            # mu_P = np.random.multivariate_normal(mu_post, covar_P)
+            mu_P = np.random.multivariate_normal(mu0_P, covar_P)
 
-            update('alpha_p')
-            update('mu_p')
+            update('lambda_P')
+            update('mu_P')
 
             # Update W hyperparams...
             W_bar = W.mean(axis=0)
             S_bar = cov(W)
             k_post = k0_W + L
+            df_post = df0_W + L
 
             mu_tmp = mu0_W - W_bar
             W_post = np.linalg.inv(
                 np.linalg.inv(W0_W) + (L * S_bar) +
                 (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
 
-            df_post = df0_W + L
-            # mu_post = (k0_W * mu0_W + L * W_bar) / k_post
-
             # ...and params.
             alpha_W = np.diag(wishart.rvs(df_post, W_post))
             lambda_W = np.eye(nf) * alpha_W
             covar_W = np.linalg.inv(k_post * lambda_W)
             mu_W = np.random.multivariate_normal(mu0_W, covar_W)
-            # mu_W = np.random.multivariate_normal(mu_post, covar_W)
 
             update('lambda_W')
             update('mu_W')
 
-            # Update p for all models.
-            alpha_pi = alpha_p + alpha_G * W.dot(X.T.dot(X)).dot(W.T)
-            sigma_pi = np.sqrt(1.0 / alpha_pi)
+            # Update P for all users.
+            for i in uniq_uids:
+                mask = train[uid] == i
+                rated = mask.nonzero()[0]
+                X_i = X[rated]
+                y_i = y[rated]
+                membs = P[uids]
 
-            Xy = y.reshape(y.shape[0], 1) * X
-            # sum_term = W.dot(Xy.T).sum(axis=1)
-            # mu_pi = covar_pi.dot(lambda_p.dot(mu_p) + alpha_G * sum_term)
-            sum_term = W.dot(Xy.T).sum()
-            mu_pi = alpha_pi * (alpha_p * mu_p + alpha_G * sum_term)
-            p = np.random.normal(mu_pi, sigma_pi, L)
+                lambda_Pi = lambda_P + alpha_G * W.dot(X_i.T.dot(X_i)).dot(W.T)
+                covar_Pi = np.linalg.inv(lambda_Pi)
+                sum_js = (X_i * y_i.reshape(X_i.shape[0], 1)).sum(axis=0)
+                mu_Pi = covar_Pi.dot(lambda_P.dot(mu_P) + alpha_G * W.dot(sum_js))
+                P[i] = np.random.multivariate_normal(mu_Pi, covar_Pi)
 
             # Update W
-            X_sum = alpha_G * X.T.dot(X)
-            Xy_sum = alpha_G * Xy.sum(axis=0)
+            X_sum = X.T.dot(X)
+            sum_term = (X * y[:, np.newaxis]).sum(axis=0)
             for l in xrange(L):
-                p_l = p[l]
-                lambda_Wl = lambda_W + (p_l ** 2) * X_sum
+                P_l = P[:, l]
+                lambda_Wl = lambda_W + alpha_G * (P_l ** 2).sum() * X_sum
                 covar_Wl = np.linalg.inv(lambda_Wl)
-                mu_Wl = covar_Wl.dot(lambda_W.dot(mu_W) + p_l * Xy_sum)
+                mu_Wl = covar_Wl.dot(lambda_W.dot(mu_W) + alpha_G * P_l.sum() * sum_term)
                 W[l] = np.random.multivariate_normal(mu_Wl, covar_Wl)
 
 
         # Store samples
-        for var in ['p', 'W']:
+        for var in ['P', 'W']:
             update(var)
 
         # After thinning, make predictions for each sample.
-        predictions[sample] = predict(alpha_G, p, W, X)
+        predictions[sample] = predict(alpha_G, P, W, X, uids, (0, 4))
         rmse = np.sqrt(((predictions[sample] - y) ** 2).sum() / y.shape[0])
         logging.info('train RMSE: %.4f' % rmse)
 
-        # # Early stopping improvement threshold check.
+        # Early stopping improvement threshold check.
         # if (prev_rmse - rmse) <= args.stopping_threshold:
         #     print '\tStopping threshold reached'
         #     break
@@ -323,8 +361,8 @@ if __name__ == "__main__":
 
 
     to_save = {rvar: trace[sample] for rvar, trace in params.items()}
-    save_np_vars(to_save, 'bpmlr_np_model', ow=True)
+    save_np_vars(to_save, 'bpmlr_nb_model', ow=True)
 
-    y_pred = predict(alpha_G, p, W, test_X)
+    y_pred = predict(alpha_G, P, W, test_X, test_uids, (0, 4))
     rmse = np.sqrt(((y_pred - test_y) ** 2).sum() / test_y.shape[0])
     logging.info('Test RMSE: %.4f' % rmse)
