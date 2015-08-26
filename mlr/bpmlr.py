@@ -393,18 +393,18 @@ if __name__ == "__main__":
             update('mu_P')
 
             # Update W hyperparams...
-            W_bar = W.mean(axis=0)
-            S_bar = cov(W)
-            k_post = k0_W + L
+            # W_bar = W.mean(axis=0)
+            # S_bar = cov(W)
+            # k_post = k0_W + L
 
-            mu_tmp = mu0_W - W_bar
-            W_post = np.linalg.inv(
-                np.linalg.inv(W0_W) + (L * S_bar) +
-                (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
-            W_post = (W_post + W_post.T) / 2  # Numerical correction?
+            # mu_tmp = mu0_W - W_bar
+            # W_post = np.linalg.inv(
+            #     np.linalg.inv(W0_W) + (L * S_bar) +
+            #     (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
+            # W_post = (W_post + W_post.T) / 2  # Numerical correction?
 
-            df_post = df0_W + L
-            mu_post = (k0_W * mu0_W + L * W_bar) / k_post
+            # df_post = df0_W + L
+            # mu_post = (k0_W * mu0_W + L * W_bar) / k_post
 
             # ...and params.
             lambda_W = wishart.rvs(df_post, W_post)
@@ -480,7 +480,6 @@ if __name__ == "__main__":
 
             # Update W
             sbias = s[uids]
-            X_term = X.T.dot(X)
             X_sum = X.T.dot(X)
             sum_term = np.sum(
                 X * (cbias + sbias + y).reshape(X.shape[0], 1), 0)
