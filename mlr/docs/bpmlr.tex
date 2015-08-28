@@ -497,11 +497,10 @@ where
 %
     \mu_{s_i}^* &= \begin{aligned}[t]
         \hstretch{0.8}{\vstretch{0.9}{
-            \frac{
-                \alpha_s\mu_s -
-                \alpha_G \sum_{j=1}^m
-                    [\bm{c}_j + P_i^TW\bm{X}_{i,j} - G_{i,j} ]^{I_{i,j}}}
-            {\alpha_{s_i}^*}}}
+            \frac{\alpha_s\mu_s -
+                  \alpha_G \sum_{j=1}^m
+                      [\bm{c}_j + P_i^TW\bm{X}_{i,j} - G_{i,j} ] I_{i,j}}
+                 {\alpha_{s_i}^*}}}
     \end{aligned}
 \end{align}
 \end{mdframed}
@@ -528,11 +527,10 @@ where
 %
     \mu_{c_j}^* &= \begin{aligned}[t]
         \hstretch{0.8}{\vstretch{0.9}{
-            \frac{
-                \alpha_c\mu_c -
-                \alpha_G \sum_{i=1}^n
-                    [\bm{s}_i + P_i^TW\bm{X}_{i,j} - G_{i,j} ]^{I_{i,j}}}
-            {\alpha_{c_j}^*}}}
+            \frac{\alpha_c\mu_c -
+                  \alpha_G \sum_{i=1}^n
+                      [\bm{s}_i + P_i^TW\bm{X}_{i,j} - G_{i,j} ] I_{i,j}}
+                 {\alpha_{c_j}^*}}}
     \end{aligned}
 \end{align}
 \end{mdframed}
@@ -557,7 +555,7 @@ where
     \Lambda_{P_i}^* &= \begin{aligned}[t]
         \Lambda_P +
         \alpha_G W \left(
-            \sum_{j=1}^m [\bm{X}_{i,j} \bm{X}_{i,j}^T ]^{I_{i,j}}
+            \sum_{j=1}^m [\bm{X}_{i,j} \bm{X}_{i,j}^T ] I_{i,j}
         \right) W^T
     \end{aligned}\\
 %
@@ -566,7 +564,7 @@ where
             [\Lambda_{P_i}^*]^{-1} \left(
                 \Lambda_P\bm{\mu_P} +
                 \alpha_G W \sum_{j=1}^m
-                    [\bm{X}_{i,j}(G_{i,j} - \bm{s}_i - \bm{c}_j)]^{I_{i,j}}
+                    [\bm{X}_{i,j}(G_{i,j} - \bm{s}_i - \bm{c}_j)] I_{i,j}
             \right)}}
         \end{aligned}
 \end{align}}
@@ -591,27 +589,211 @@ where
 
 \begin{align}
     \Lambda_{W_l}^* &= \begin{aligned}[t]
-    \Lambda_W + \alpha_G \sum_{i=1}^N
-        [ P_{i,l}^2 \sum_{j=1}^m
-            \bm{X}_{i,j} \bm{X}_{i,j}^T ]^{I_{i,j}}
+        \Lambda_W + \alpha_G \sum_{i=1}^N
+            [ P_{i,l}^2 \sum_{j=1}^m
+                \bm{X}_{i,j} \bm{X}_{i,j}^T ] I_{i,j}
     \end{aligned}\\
 %
     \bm{\mu}_{W_l}^* &= \begin{aligned}[t]
-        \vstretch{0.9}{\hstretch{0.8}{
+        \vstretch{0.8}{\hstretch{0.7}{
             [\Lambda_{W_l}^*]^{-1} \left(
                 \Lambda_W\bm{\mu_W} +
                 \alpha_G \sum_{i=1}^n
                     [P_{i,l} \sum_{j=1}^m
                         \bm{X}_{i,j}(G_{i,j} - \bm{s}_i - \bm{c}_j)
-                    ]^{I_{i,j}}
+                    ] I_{i,j}
             \right)}}
-    \end{aligned}\\
-    \nonumber
+    \end{aligned}
 \end{align}}
 \end{mdframed}
 %% END: CPD for W
 
-\subsection{Dirichlet Process Membership Vectors}
+
+\section{Derivations}\label{derivations}
+
+\setlength{\belowdisplayskip}{6pt} \setlength{\belowdisplayshortskip}{6pt}
+\setlength{\abovedisplayskip}{8pt} \setlength{\abovedisplayshortskip}{8pt}
+
+In this section, derivations for the semi-conjugate posterior distributions of P
+and W are given. First we show derivations for a simplified version of the model
+without the bias terms, so we have:
+%
+\begin{equation}
+    \hat{G}_{ij} = P_i^T W X_{ij}
+\end{equation}
+%
+\begin{flalign}
+    &p(P | W, \bm{X}, \mu_P, \Lambda_P)  \\
+        \nonumber
+        &= \prod_{i=1}^N \mathcal{N}(P_i | \mu_P, \Lambda_P)
+           \prod_{j=1}^M \mathcal{N}(G_{ij} | \hat{G}_{ij}, \alpha_G) \\
+%
+    &p(W | P, \bm{X}, \mu_W, \Lambda_W)  \\
+        \nonumber
+        &=  \prod_{l=1}^L\mathcal{N}(W_l | \mu_W, \Lambda_W)
+            \prod_{i=1}^N \prod_{j=1}^M
+                \mathcal{N}(G_{ij} | \hat{G}_{ij}, \alpha_G)
+\end{flalign}
+%
+So for a single row $P_i$, we have conditional distribution:
+%
+\begin{flalign}
+    &p(P_i | W, \bm{X}, \mu_P, \Lambda_P)  \\
+    \nonumber
+    &=  \mathcal{N}(P_i | \mu_P, \Lambda_P)
+        \prod_{j=1}^M \mathcal{N}(G_{ij} | \hat{G}_{ij}, \alpha_G) \\
+%%
+    \nonumber
+    &= \frac{|\Lambda_P|^{1/2}}{(2\pi)^{f/2}}
+        exp\left\{
+            -\frac{1}{2} (P_i - \mu_P)^T \Lambda_P (P_i - \mu_P)
+        \right\} \\
+        &\hspace{4mm}\vspace{-2mm} \times
+        \frac{|\alpha_G|^{M/2}}{(2\pi)^{Mf/2}}
+        exp\left\{
+            -\frac{\alpha_G}{2} \sum_{j=1}^M (G_{ij} - \hat{G}_{ij})^2
+        \right\} \\
+%%
+    &\propto
+        (P_i - \mu_P)^T \Lambda_P (P_i - \mu_P) +
+        \alpha_G \sum_{j=1}^M (G_{ij} - \hat{G}_{ij})^2 \\
+%%
+    &=  (P_i^T\Lambda_P - \mu_P^T\Lambda_P) (P_i - \mu_P) +
+        \alpha_G \sum_{j=1}^M (G_{ij} - \hat{G}_{ij})^2 \\
+%%
+    \nonumber
+    &=  P_i^T \Lambda_P P_i - 2 P_i^T \Lambda_P \mu_P + \mu_P^T \Lambda_P \mu_P \\
+        &\hspace{4mm}\vspace{-2mm}
+        + \alpha_G \sum_{j=1}^M
+            (G_{ij}^2 - 2 G_{ij} \hat{G}_{ij} + \hat{G}_{ij}^2) \\
+%%
+    \nonumber
+    &\propto
+        P_i^T \Lambda_P P_i - 2 P_i^T \Lambda_P \mu_P \\
+        &\hspace{4mm}\vspace{-2mm}
+        + \alpha_G \sum_{j=1}^M \left(
+            (P_i^T W X_{ij})^2 - 2 G_{ij} (P_i^T W X_{ij})
+        \right) \\
+%%
+    \nonumber
+    &=  P_i^T \left(
+        \Lambda_P + \alpha_G \sum_{j=1}^M (W X_{ij})(W X_{ij})^T
+        \right) P_i \\
+        &\hspace{4mm}\vspace{-2mm}
+        - 2 P_i^T \left(
+            \Lambda_P \mu_P + \alpha_G \sum_{j=1}^M G_{ij} W X_{ij}
+        \right) \\
+%%
+    \nonumber
+    &=  P_i^T \left(
+            \Lambda_P + \alpha_G W \left(
+                \sum_{j=1}^M X_{ij} X_{ij}^T
+            \right) W^T
+        \right) P_i \\
+        &\hspace{4mm}\vspace{-2mm}
+        - 2 P_i^T \left(
+            \Lambda_P \mu_P + \alpha_G W \sum_{j=1}^M G_{ij} X_{ij}
+        \right) \\
+%%
+    &\propto
+        \mathcal{N}(P_i | \mu_{P_i}^*, \Lambda_{P_i}^*),
+\end{flalign}
+%
+where
+\pagebreak
+%
+\begin{align}
+    \Lambda_{P_i}^* &= \begin{aligned}[t]
+        \Lambda_P + \alpha_G W \left[\sum_{j=1}^M
+            [X_{ij} X_{ij}^T] I_{ij}
+        \right] W^T
+    \end{aligned}\\
+%
+    \bm{\mu}_{P_i}^* &= \begin{aligned}[t]
+        \vstretch{0.9}{\hstretch{0.8}{
+            [\Lambda_{P_i}^*]^{-1} \left[
+                \Lambda_P\bm{\mu_P} +
+                \alpha_G W \sum_{j=1}^M [G_{ij} X_{ij}] I_{ij}
+            \right]}}
+    \end{aligned}
+\end{align}
+%% END: CPD for P
+
+Next we look at the conditional distribution for $W$ given everything else.
+Recall that we are working with the version of the model without bias terms.
+Using the result for $P$, we can skip a few steps. For each model $l = \{1, ...,
+L\}$, we have:
+%
+\begin{align}
+    &p(W_l | \mu_W, \Lambda_W) \\
+    \nonumber
+    &\propto
+        exp\left\{
+            -\frac{1}{2} (W_l - \mu_W)^T \Lambda_W (W_l - \mu_W)
+        \right\} \\
+        &\hspace{4mm}\vspace{-2mm} \times
+        exp\left\{
+            -\frac{\alpha_G}{2} \sum_{i=1}^N \sum_{j=1}^M
+                (G_{ij} - \hat{G}_{ij})^2
+        \right\} \\
+%%
+    \nonumber
+    &\propto
+        W_l^T \Lambda_W W_l - 2 W_l^T \Lambda_W \mu_W \\
+        &\hspace{4mm}\vspace{-2mm}
+        + \alpha_G \sum_{i=1}^N \sum_{j=1}^M
+        ((P_i^T W X_{ij})^2 - 2 G_{ij} (P_i^T W X_{ij})) \\
+%%
+    \nonumber
+    &=  W_l^T \Lambda_W W_l - 2 W_l^T \Lambda_W \mu_W \\
+        &\hspace{4mm}\vspace{-2mm}\nonumber
+        + \alpha_G \sum_{i=1}^N \sum_{j=1}^M \left(
+            \sum_{l'=1}^L (P_{il'} W_{l'} X_{ij})^2 \right. \\
+            &\hspace{28mm}\vspace{-2mm}\left.
+            - 2 G_{ij} X_{ij} \sum_{l'=1}^L (P_{il'} W_{l'})
+        \right) \\
+%%
+    \nonumber
+    &\propto
+        W_l^T \Lambda_W W_l - 2 W_l^T \Lambda_W \mu_W \\
+        &\hspace{4mm}\vspace{-2mm}\nonumber
+        + \alpha_G \sum_{i=1}^N \sum_{j=1}^M (P_{il} W_l X_{ij})^2 \\
+        &\hspace{4mm}\vspace{-2mm}
+        - 2 \alpha_G \sum_{i=1}^N \sum_{j=1}^M G_{ij} P_{il} W_l X_{ij} \\
+%%
+    \nonumber
+    &=  W_l^T \left(
+            \Lambda_W + \alpha_G \sum_{i=1}^N P_{il}^2
+                        \sum_{j=1}^M X_{ij} X_{ij}^T
+        \right) W  \\
+        &\hspace{4mm}\vspace{-2mm}
+        - 2 W_l^T \left(
+            \Lambda_W \mu_W + \alpha_G \sum_{i=1}^N P_{il}
+                              \sum_{j=1}^M G_{ij} X_{ij}
+        \right) \\
+%%
+    &\propto
+        \mathcal{N}(W_l | \bm{\mu}_{W_l}^*, \Lambda_{W_l}^*),
+\end{align}
+%
+where
+%
+\begin{align}
+    \Lambda_{W_l}^* &= \begin{aligned}[t]
+        \Lambda_W + \alpha_G \sum_{i=1}^N P_{il}^2 \sum_{j=1}^M
+            [X_{ij} X_{ij}^T] I_{ij}
+    \end{aligned}\\
+%
+    \bm{\mu}_{W_l}^* &= \begin{aligned}[t]
+        \vstretch{0.9}{\hstretch{0.8}{
+            [\Lambda_{W_l}^*]^{-1} \left[
+                \Lambda_W\bm{\mu}_W +
+                \alpha_G \sum_{i=1}^N P_{il} \sum_{j=1}^M
+                    [G_{ij} X_{ij}] I_{ij}
+            \right]}}
+    \end{aligned}
+\end{align}
+%% END: CPD for W
 
 
 \section{Previous work}\label{previous work}
