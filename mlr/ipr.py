@@ -292,18 +292,14 @@ def make_parser():
         type=float, default=(1. / 2 ** 4),
         help='standard deviation of Gaussian noise used in model param'
              'initialization')
-    # parser.add_argument(
-    #     '-q', '--quadratic',
-    #     action='store_true', default=False,
-    #     help='add quadratic features (power 2)')
     parser.add_argument(
         '-t', '--target',
         default='grade',
         help='target variable to predict; default is "grade"')
-    # parser.add_argument(
-    #     '-n', '--nonneg',
-    #     action='store_true', default=False,
-    #     help='enable non-negativity constraints on all params')
+    parser.add_argument(
+        '-n', '--nonneg',
+        action='store_true', default=False,
+        help='enable non-negativity constraints on all params')
     parser.add_argument(
         '-v', '--verbose',
         type=int, default=0, choices=(0, 1, 2),
@@ -356,6 +352,7 @@ if __name__ == "__main__":
     lambda_b=args.lambda_b
     iters=args.iters
     std=args.init_std
+    nn=args.nonneg
     verbose=args.verbose
 
     b1 = np.unique(eids).shape[0]  # num unique values for entity to profile
@@ -364,11 +361,13 @@ if __name__ == "__main__":
 
     # Init params.
     w0 = 0
+
     dtype = np.float128
     w = np.zeros(nb).astype(dtype)
-    P = np.zeros((b1, k)).astype(dtype)
-    # P = np.random.normal(0, std, (b1, k))
-    W = np.random.normal(0, std, (k, p)).astype(dtype)
+    # P_zeros = np.zeros((b1, k)).astype(dtype)
+    P = np.random.normal(0.1, std, (b1, k))
+    # W_zeros = np.zeros((k, p)).astype(dtype)
+    W = np.random.normal(0.1, std, (k, p)).astype(dtype)
 
     model = {
         'w0': w0,
@@ -415,30 +414,14 @@ if __name__ == "__main__":
             rows = B_tf.indices
             dat = B_tf.data
             sq_sum = (dat ** 2).sum()
-            wf_new = ((err[rows] * dat - w_f * sq_sum) / sq_sum)[0] * lrate
+            wf_new = ((err[rows] * dat - w_f * sq_sum) / sq_sum)[0]
+            if nn:
+                wf_new = np.maximum(0, wf_new)
+
             err[rows] += (w_f - wf_new) * dat
             w[f] = wf_new
 
         logging.info('Train RMSE after w:\t%.4f' % rmse_from_err(err))
-
-        #TODO: diagnose error that comes from these updates.
-        # Update P for each primary entity value i and each model l.
-        for l in xrange(k):
-            P_l = P[:,l]
-            W_l = W[l]
-            reg_sums = X_t.dot(W_l)
-            sq_sum = (reg_sums ** 2).sum()
-            for i in xrange(b1):
-                P_il = P_l[i]
-                Pil_new = ((P_il * sq_sum - (err * reg_sums).sum()) /
-                           (lambda_w - sq_sum)) * (lrate / 2.)
-                update = (P_il - Pil_new) * reg_sums
-                err += update
-                P[i,l] = Pil_new
-
-        # recompute err to correct rounding errors.
-        err = compute_errors(model, eids, X, y, nb)
-        logging.info('Train RMSE after P:\t%.4f' % rmse_from_err(err))
 
         # Update W for each feature f and model l.
         for f in xrange(p):
@@ -451,15 +434,37 @@ if __name__ == "__main__":
                 weighted_fs = P_l[eids][rows] * X_f.data
                 sq_sum = (weighted_fs ** 2).sum()
                 numer = W_lf * sq_sum - (err[rows] * weighted_fs).sum()
-                Wlf_new = (numer / (lambda_w - sq_sum)) * (lrate / 2.)
+                Wlf_new = (numer / (lambda_w - sq_sum)) * lrate
+                if nn:
+                    Wlf_new = np.maximum(0, Wlf_new)
+
                 err[rows] += (W_lf - Wlf_new) * weighted_fs
                 W[l,f] = Wlf_new
-
-        W[np.isnan(W)] = 0
 
         # Recompute error to avoid rounding errors.
         err = compute_errors(model, eids, X, y, nb)
         logging.info('train RMSE after W:\t%.4f' % rmse_from_err(err))
+
+        # Update P for each primary entity value i and each model l.
+        for l in xrange(k):
+            P_l = P[:,l]
+            W_l = W[l]
+            reg_sums = X_t.dot(W_l)
+            sq_sum = (reg_sums ** 2).sum()
+            for i in xrange(b1):
+                P_il = P_l[i]
+                Pil_new = ((P_il * sq_sum - (err * reg_sums).sum()) /
+                           (lambda_w - sq_sum)) * lrate
+                if nn:
+                    Pil_new = np.maximum(0, Pil_new)
+
+                err += (P_il - Pil_new) * reg_sums
+                P[i,l] = Pil_new
+
+        # recompute err to correct rounding errors.
+        err = compute_errors(model, eids, X, y, nb)
+        logging.info('Train RMSE after P:\t%.4f' % rmse_from_err(err))
+
 
     elapsed = time.time() - start
     logging.info('total time elapsed:\t(%.2fs)' % elapsed)
