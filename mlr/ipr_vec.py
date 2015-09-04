@@ -404,7 +404,7 @@ if __name__ == "__main__":
         B_sum = np.asarray(B_t.sum(axis=0))[0]
         err_sum = err * B_t
         reg_sum = w * B_sum
-        w_new = (err_sum - reg_sum) / B_sum
+        w_new = ((err_sum - reg_sum) / B_sum) * lrate
         err += B_t * (w - w_new)
 
         # Recompute error to avoid rounding errors.
@@ -416,7 +416,7 @@ if __name__ == "__main__":
         membs = P[eids]
         sq_sum = (membs ** 2).T * X_tsq
         err_sum = (membs * err[:, np.newaxis]).T * X_t
-        W_new = (W * sq_sum - err_sum) / (lambda_w - sq_sum)
+        W_new = lrate * (W * sq_sum - err_sum) / (lambda_w - sq_sum)
         err += (X_t * W.T * membs).dot(W - W_new).sum(axis=1)
 
         # Recompute error to avoid rounding errors.
@@ -431,7 +431,7 @@ if __name__ == "__main__":
         for i in xrange(b1):
             P_i = P[i]
             err_sum = W.dot(err * X_t)
-            Pi_new = (reg_coeffs.dot(P_i).sum() - err_sum) / (lambda_w - sq_sum)
+            Pi_new = lrate * (reg_coeffs.dot(P_i).sum() - err_sum) / (lambda_w - sq_sum)
             err += tmp.dot(P_i - Pi_new)
 
         # recompute err to correct rounding errors.
