@@ -233,15 +233,7 @@ def ipr_predict(model, eids, X, nb):
 
     B = X[:, :nb]
     X = X[:, nb:]
-    n = X.shape[0]
-
-    bias = B.dot(w)
-    coeffs = P.dot(W)
-
-    return np.array([
-        w0 + bias[i] + (X[i] * coeffs[i])[0]
-        for i in xrange(n)
-    ]).reshape(n)
+    return w0 + B.dot(w) + (X.dot(W.T) * P).sum(axis=1)
 
 def compute_errors(model, eids, X, y, nb):
     return y - ipr_predict(model, eids, X, nb)
@@ -392,11 +384,21 @@ if __name__ == "__main__":
     w0 = w0_new
 
     model['w0'] = w0
-    logging.info('Train RMSE after w0:\t%.4f' % compute_rmse(
-        model, eids, X, y, nb))
+    rmse = compute_rmse(model, eids, X, y, nb)
+    prev_rmse = np.inf
+    logging.info('Train RMSE after w0:\t%.4f' % rmse)
 
     # Set lrate; necessary to avoid overzealous steps. Why?
-    lrate = 0.01
+    lrate = 1.0
+    eps = 0.0001
+    num_tries = 0
+    max_tries = 3
+
+    # Make lists of indices to be permuted.
+    b_indices = range(nb)
+    p_indices = range(p)
+    k_indices = range(k)
+    e_indices = range(b1)
 
     start = time.time()
     logging.info('training model for %d iterations' % iters)
@@ -404,66 +406,124 @@ if __name__ == "__main__":
         elapsed = time.time() - start
         logging.info('iteration %03d\t(%.2fs)' % (inum + 1, elapsed))
 
-        # if inum == 1:
-        #     sys.exit()
-
         # Update w for each entity feature f.
-        for f in xrange(nb):
-            w_f = w[f]
-            B_tf = B_t[:,f]
-            rows = B_tf.indices
-            dat = B_tf.data
-            sq_sum = (dat ** 2).sum()
-            wf_new = ((err[rows] * dat - w_f * sq_sum) / sq_sum)[0]
-            if nn:
-                wf_new = np.maximum(0, wf_new)
+        old_w = w.copy()
+        tmp_rmse = rmse
+        num_tries = 0
+        while tmp_rmse - rmse <= eps:
+            for f in np.random.permutation(b_indices):
+                w_f = w[f]
+                B_tf = B_t[:,f]
+                rows = B_tf.indices
+                dat = B_tf.data
+                sq_sum = (dat ** 2).sum()
+                wf_new = lrate * ((err[rows] * dat - w_f * sq_sum) / sq_sum)[0]
+                if nn:
+                    wf_new = np.maximum(0, wf_new)
 
-            err[rows] += (w_f - wf_new) * dat
-            w[f] = wf_new
+                err[rows] += (w_f - wf_new) * dat
+                w[f] = wf_new
 
-        logging.info('Train RMSE after w:\t%.4f' % rmse_from_err(err))
+            rmse = rmse_from_err(err)
+            if tmp_rmse - rmse < eps:
+                w = old_w
+                if num_tries > max_tries:
+                    rmse = tmp_rmse
+                    break
+                else:
+                    num_tries += 1
+                    lrate *= 0.5
+
+        logging.info('train RMSE after w:\t%.4f' % rmse)
 
         # Update W for each feature f and model l.
-        for f in xrange(p):
-            X_f = X_t[:,f]  # n x 1
-            rows = X_f.indices
-            for l in xrange(k):
-                W_lf = W[l,f]
-                P_l = P[:,l]  # n x 1
+        old_W = W.copy()
+        tmp_rmse = rmse
+        num_tries = 0
+        while tmp_rmse - rmse <= eps:
+            for f in np.random.permutation(p_indices):
+                X_f = X_t[:,f]  # n x 1
+                rows = X_f.indices
+                for l in np.random.permutation(k_indices):
+                    W_lf = W[l,f]
+                    P_l = P[:,l]  # n x 1
 
-                weighted_fs = P_l[eids][rows] * X_f.data
-                sq_sum = (weighted_fs ** 2).sum()
-                numer = W_lf * sq_sum - (err[rows] * weighted_fs).sum()
-                Wlf_new = (numer / (lambda_w - sq_sum)) * lrate
-                if nn:
-                    Wlf_new = np.maximum(0, Wlf_new)
+                    weighted_fs = P_l[eids][rows] * X_f.data
+                    sq_sum = (weighted_fs ** 2).sum()
+                    numer = W_lf * sq_sum - (err[rows] * weighted_fs).sum()
+                    Wlf_new = (numer / (lambda_w - sq_sum)) * (lrate * 0.5)
+                    if nn:
+                        Wlf_new = np.maximum(0, Wlf_new)
 
-                err[rows] += (W_lf - Wlf_new) * weighted_fs
-                W[l,f] = Wlf_new
+                    err[rows] += (W_lf - Wlf_new) * weighted_fs
+                    W[l,f] = Wlf_new
 
-        # Recompute error to avoid rounding errors.
-        err = compute_errors(model, eids, X, y, nb)
-        logging.info('train RMSE after W:\t%.4f' % rmse_from_err(err))
+            # Recompute error to avoid rounding errors.
+            err = compute_errors(model, eids, X, y, nb)
+            rmse = rmse_from_err(err)
+            if tmp_rmse - rmse < eps:
+                W = old_W
+                if num_tries > max_tries:
+                    rmse = tmp_rmse
+                    break
+                else:
+                    num_tries += 1
+                    lrate *= 0.5
+
+        logging.info('train RMSE after W:\t%.4f' % rmse)
 
         # Update P for each primary entity value i and each model l.
-        for l in xrange(k):
-            P_l = P[:,l]
-            W_l = W[l]
-            reg_sums = X_t.dot(W_l)
-            sq_sum = (reg_sums ** 2).sum()
-            for i in xrange(b1):
-                P_il = P_l[i]
-                Pil_new = ((P_il * sq_sum - (err * reg_sums).sum()) /
-                           (lambda_w - sq_sum)) * lrate
-                if nn:
-                    Pil_new = np.maximum(0, Pil_new)
+        old_P = P.copy()
+        tmp_rmse = rmse
+        num_tries = 0
+        while tmp_rmse - rmse <= eps:
+            for l in np.random.permutation(k_indices):
+                P_l = P[:,l]
+                W_l = W[l]
+                reg_sums = X_t.dot(W_l)
+                sq_sum = (reg_sums ** 2).sum()
+                for i in np.random.permutation(e_indices):
+                    P_il = P_l[i]
+                    Pil_new = ((P_il * sq_sum - (err * reg_sums).sum()) /
+                               (lambda_w - sq_sum)) * (lrate * 0.5)
+                    if nn:
+                        Pil_new = np.maximum(0, Pil_new)
 
-                err += (P_il - Pil_new) * reg_sums
-                P[i,l] = Pil_new
+                    err += (P_il - Pil_new) * reg_sums
+                    P[i,l] = Pil_new
 
-        # recompute err to correct rounding errors.
-        err = compute_errors(model, eids, X, y, nb)
-        logging.info('Train RMSE after P:\t%.4f' % rmse_from_err(err))
+            # recompute err to correct rounding errors.
+            err = compute_errors(model, eids, X, y, nb)
+            rmse = rmse_from_err(err)
+            if tmp_rmse - rmse < eps:
+                P = old_P
+                if num_tries > max_tries:
+                    rmse = tmp_rmse
+                    break
+                else:
+                    num_tries += 1
+                    lrate *= 0.5
+
+        logging.info('train RMSE after P:\t%.4f' % rmse)
+
+        # Stopping check.
+        if prev_rmse - rmse < eps:
+            logging.info('reached stopping threshold')
+            break
+        else:
+            prev_rmse = rmse
+
+        # Randomly reset some values to 0s.
+        for f in np.random.choice(p_indices, int(nb * 0.02), replace=False):
+            w[int(f)] = 0
+
+        for i in np.random.choice(e_indices, int(b1 * 0.02), replace=False):
+            l = int(np.random.choice(k_indices))
+            P[i,l] = 0
+
+        for f in np.random.choice(p_indices, int(p * 0.02), replace=False):
+            l = int(np.random.choice(k_indices))
+            W[l,int(f)] = np.random.normal(0, std)
 
 
     elapsed = time.time() - start
@@ -471,7 +531,7 @@ if __name__ == "__main__":
 
     logging.info('making predictions')
     err = ipr_predict(model, test_eids, test_X.tocsc(), nb) - test_y
-    print 'FM RMSE:\t%.4f' % rmse_from_err(err)
+    print 'IPR RMSE:\t%.4f' % rmse_from_err(err)
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
     print 'UR RMSE:\t%.4f' % rmse_from_err(baseline_pred - test_y)
