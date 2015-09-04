@@ -304,6 +304,20 @@ def make_parser():
         '-f', '--feature-guide',
         help='file to specify target, categorical, and real-valued features; '
              'see the docstring for more detailed info on the format')
+
+    parser.add_argument(
+        '-lr', '--lrate',
+        type=float, default=0.5,
+        help='stepsize for parameter updates')
+    parser.add_argument(
+        '-e', '--epsilon',
+        type=float, default=0.0001,
+        help='stopping threshold for early stopping test')
+    parser.add_argument(
+        '-mt', '--max-tries',
+        type=int, default=3,
+        help='maximum number of times to try updating a parameter before moving'
+             'on to the next one; default is 3')
     return parser
 
 
@@ -347,6 +361,10 @@ if __name__ == "__main__":
     nn=args.nonneg
     verbose=args.verbose
 
+    lrate=args.lrate
+    eps=args.epsilon
+    max_tries=args.max_tries
+
     b1 = np.unique(eids).shape[0]  # num unique values for entity to profile
     n, nf = X.shape  # num training examples and num features
     p = nf - nb  # num non-entity predictor variables
@@ -389,9 +407,8 @@ if __name__ == "__main__":
     logging.info('Train RMSE after w0:\t%.4f' % rmse)
 
     # Set lrate; necessary to avoid overzealous steps. Why?
-    lrate = 1.0
+    lrate = 0.5
     eps = 0.0001
-    num_tries = 0
     max_tries = 3
 
     # Make lists of indices to be permuted.
@@ -424,6 +441,7 @@ if __name__ == "__main__":
                 err[rows] += (w_f - wf_new) * dat
                 w[f] = wf_new
 
+            err = compute_errors(model, eids, X, y, nb)
             rmse = rmse_from_err(err)
             if tmp_rmse - rmse < eps:
                 w = old_w
@@ -513,24 +531,28 @@ if __name__ == "__main__":
         else:
             prev_rmse = rmse
 
-        # Randomly reset some values to 0s.
-        for f in np.random.choice(p_indices, int(nb * 0.02), replace=False):
-            w[int(f)] = 0
+            # Randomly reset some values to 0s.
+            bc = int(nb * 0.02)
+            ec = int(b1 * 0.02)
+            pc = int(p * 0.02)
 
-        for i in np.random.choice(e_indices, int(b1 * 0.02), replace=False):
-            l = int(np.random.choice(k_indices))
-            P[i,l] = 0
+            for f in np.random.choice(p_indices, bc, replace=False):
+                w[int(f)] = 0
 
-        for f in np.random.choice(p_indices, int(p * 0.02), replace=False):
-            l = int(np.random.choice(k_indices))
-            W[l,int(f)] = np.random.normal(0, std)
+            for i in np.random.choice(e_indices, ec, replace=False):
+                l = int(np.random.choice(k_indices))
+                P[i,l] = 0
+
+            for f in np.random.choice(p_indices, pc, replace=False):
+                l = int(np.random.choice(k_indices))
+                W[l,int(f)] = np.random.normal(0, std)
 
 
     elapsed = time.time() - start
     logging.info('total time elapsed:\t(%.2fs)' % elapsed)
 
     logging.info('making predictions')
-    err = ipr_predict(model, test_eids, test_X.tocsc(), nb) - test_y
+    err = test_y - ipr_predict(model, test_eids, test_X.tocsc(), nb)
     print 'IPR RMSE:\t%.4f' % rmse_from_err(err)
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
