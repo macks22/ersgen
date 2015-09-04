@@ -203,13 +203,15 @@ if __name__ == "__main__":
     # Init P hyparparams.
     mu0_P = np.zeros(L)
     df0_P = L
-    alpha_P = np.ones(L) * 2
+    #alpha_P = np.ones(L) * 2
+    alpha_P = np.ones(L) * 1
     W0_P = np.eye(L)
     k0_P = 1
 
     # Init W hyperparams.
     mu0_W = np.zeros(nf)
-    alpha_W = np.ones(nf) * 2
+    #alpha_W = np.ones(nf) * 2
+    alpha_W = np.ones(nf) * 1
     df0_W = nf
     W0_W = np.eye(nf)
     k0_W = 1
@@ -222,9 +224,11 @@ if __name__ == "__main__":
         # Init params from loaded model.
         mu_P = model.get('mu_P', P.mean(axis=0))
         lambda_P = model.get('lambda_P', np.linalg.inv(cov(P)))
+        alpha_P = np.diag(lambda_P)
 
         mu_W = model.get('mu_W', W.mean(axis=0))
         lambda_W = model.get('lambda_W', np.linalg.inv(cov(W)))
+        alpha_W = np.diag(lambda_W)
 
     else:
         # Init params using hyperparams.
@@ -232,7 +236,6 @@ if __name__ == "__main__":
         covar_P = np.linalg.inv(lambda_P * k0_P)
         mu_P = np.random.multivariate_normal(mu0_P, covar_P)
 
-        # lambda_W = wishart.rvs(df0_W, W0_W)
         lambda_W = np.eye(nf) * alpha_W
         covar_W = np.linalg.inv(lambda_W * k0_W)
         mu_W = np.random.multivariate_normal(mu0_W, covar_W)
@@ -276,43 +279,46 @@ if __name__ == "__main__":
         for sub_sample in xrange(args.thin):
 
             # Update P hyperparams...
-            k_post = k0_P + N
-            P_bar = P.mean(axis=0)
-            S_bar = cov(P)
+            # k_post = k0_P + N
+            # df_post = df0_P + N
+            # P_bar = P.mean(axis=0)
+            # S_bar = cov(P)
 
-            mu_tmp = mu0_P - P_bar
-            W_post = np.linalg.inv(
-                np.linalg.inv(W0_P) + (N * S_bar) +
-                (k0_P * N) * mu_tmp.dot(mu_tmp.T) / k_post)
+            # mu_tmp = mu0_P - P_bar
+            # W_post = np.linalg.inv(
+            #     np.linalg.inv(W0_P) + (N * S_bar) +
+            #     (k0_P * N) * mu_tmp.dot(mu_tmp.T) / k_post)
 
-            df_post = df0_P + N
-            # mu_post = (k0_P * mu0_P + N * P_bar) / k_post
 
-            # ...and params.
-            alpha_P = np.diag( wishart.rvs(df_post, W_post))
-            lambda_P = np.eye(L) * alpha_P
-            covar_P = np.linalg.inv(k_post * lambda_P)
-            # mu_P = np.random.multivariate_normal(mu_post, covar_P)
+            # # ...and params.
+            # lambda_P = wishart.rvs(df_post, W_post)
+            # try:
+            #     alpha_P = np.diag(lambda_P)
+            # except ValueError:  # scalar
+            #     alpha_P = lambda_P
+
+            # lambda_P = np.eye(L) * alpha_P
+            # covar_P = np.linalg.inv(k_post * lambda_P)
             mu_P = np.random.multivariate_normal(mu0_P, covar_P)
 
             update('lambda_P')
             update('mu_P')
 
             # Update W hyperparams...
-            W_bar = W.mean(axis=0)
-            S_bar = cov(W)
-            k_post = k0_W + L
-            df_post = df0_W + L
+            # k_post = k0_W + L
+            # df_post = df0_W + L
+            # W_bar = W.mean(axis=0)
+            # S_bar = cov(W)
 
-            mu_tmp = mu0_W - W_bar
-            W_post = np.linalg.inv(
-                np.linalg.inv(W0_W) + (L * S_bar) +
-                (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
+            # mu_tmp = mu0_W - W_bar
+            # W_post = np.linalg.inv(
+            #     np.linalg.inv(W0_W) + (L * S_bar) +
+            #     (k0_W * L) * mu_tmp.dot(mu_tmp.T) / k_post)
 
-            # ...and params.
-            alpha_W = np.diag(wishart.rvs(df_post, W_post))
-            lambda_W = np.eye(nf) * alpha_W
-            covar_W = np.linalg.inv(k_post * lambda_W)
+            # # ...and params.
+            # alpha_W = np.diag(wishart.rvs(df_post, W_post))
+            # lambda_W = np.eye(nf) * alpha_W
+            # covar_W = np.linalg.inv(k_post * lambda_W)
             mu_W = np.random.multivariate_normal(mu0_W, covar_W)
 
             update('lambda_W')
