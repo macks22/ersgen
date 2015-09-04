@@ -10,7 +10,8 @@ import pandas as pd
 import seaborn as sns
 from sklearn import preprocessing
 
-from cmlr import compute_rmse, fit_mlr, rmse_from_err
+from cmlr import (
+    fit_mlr_sgd, fit_mlr_sgd_nn, fit_mlr_als, rmse_from_err, compute_rmse)
 from util import (
     scale_features, add_squared_features, map_ids, save_np_vars, load_np_vars)
 
@@ -22,6 +23,10 @@ def split_train_test(data, term):
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
+    parser.add_argument(
+        '-m', '--method',
+        choices=('sgd', 'als'), default='sgd',
+        help='learning method to use')
     parser.add_argument(
         '-d', '--data_file', default='',
         help='path of data file')
@@ -64,7 +69,7 @@ def make_parser():
         help='target variable to predict; default is "grade"')
     parser.add_argument(
         '-n', '--nonneg',
-        type=int, choices=(0, 1), default=0,
+        action='store_true', default=False,
         help='enable non-negativity constraints on all params')
     parser.add_argument(
         '-v', '--verbose',
@@ -137,16 +142,30 @@ if __name__ == "__main__":
     logging.info('%d dyads with %d features' % (nd, nf))
     logging.info('l=%d, lr=%f' % (l, args.lrate))
 
-    # Fit model.
-    model = fit_mlr(train_x, train_y, train_uids, train_iids,
-                    l=l,
-                    lrate=args.lrate,
-                    lambda_w=args.lambda_w,
-                    lambda_b=args.lambda_b,
-                    iters=args.iters,
-                    std=args.std,
-                    verbose=args.verbose,
-                    nonneg=args.nonneg)
+    # Multiplex learning method.
+    params = dict(_X=train_x,
+                  y=train_y,
+                  uids=train_uids,
+                  iids=train_iids,
+                  l=l,
+                  lambda_w=args.lambda_w,
+                  lambda_b=args.lambda_b,
+                  iters=args.iters,
+                  std=args.std,
+                  verbose=args.verbose)
+
+    if args.method == 'als':
+        if args.nonneg:
+            print 'Non-negative ALS learning not implemented'
+            sys.exit(1)
+        else:
+            fit = fit_mlr_als
+    else: # args.method == 'sgd'
+        fit = fit_mlr_sgd_nn if args.nonneg else fit_mlr_sgd
+        params['lrate'] = args.lrate
+
+    # Train the model using the selected learning method.
+    model = fit(**params)
 
     logging.info('making predictions')
     print 'MLR RMSE:\t%.4f' % compute_rmse(
