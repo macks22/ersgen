@@ -14,6 +14,9 @@ ipr: $(IPR).pyx
 	gcc -c $(CFLAGS) $(IPR).c
 	gcc -shared $(IPR).o -o $(IPR).so
 
+ipr-sgd-prof: ipr_sgd_prof.py
+	python ipr_sgd_prof.py
+
 clean:
 	rm -f $(MLR).c
 	rm -f $(MLR).o
