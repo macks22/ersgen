@@ -9,6 +9,7 @@ import scipy as sp
 import seaborn as sns
 from sklearn import preprocessing
 
+from util import save_np_vars
 from cipr import (
     fit_ipr_sgd, compute_errors, compute_rmse, ipr_predict, rmse_from_err)
 
@@ -277,10 +278,10 @@ def make_parser():
         '-v', '--verbose',
         type=int, default=0, choices=(0, 1, 2),
         help='verbosity level; 0=None, 1=INFO, 2=DEBUG')
-    # parser.add_argument(
-    #     '-o', '--output',
-    #     default='',
-    #     help='directory to save model params to; default is none: do not save')
+    parser.add_argument(
+        '-o', '--output',
+        default='',
+        help='directory to save model params to; default is none: do not save')
     parser.add_argument(
         '-f', '--feature-guide',
         default='',
@@ -342,3 +343,59 @@ if __name__ == "__main__":
 
     gm_pred = np.repeat(y.mean(), len(test_y))
     print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
+
+    # Save model params.
+    if args.output:
+        save_np_vars(model, args.output)
+
+
+    # Calculate feature importance metrics.
+    # nd = number of nonzero observations
+    # uniq_uids = np.unique(train_uids)
+    # item_count = np.vectorize(lambda i: train[train[uid] == i].shape[0])
+    # m = item_count(uniq_uids)
+
+    # user_count = np.vectorize(lambda j: train[train[iid] == j].shape[0])
+    # uniq_iids = np.unique(train_iids)
+    # n = user_count(uniq_iids)
+
+    # # Extract model params from returned dict.
+    # w = model['w']
+    # P = model['P']
+    # W = model['W']
+
+    # # Calculate individual deviation contributions.
+    # dev = {}
+
+    # # importance of bias terms
+    # dev['s'] = (m * s).sum()
+    # dev['c'] = (n * c).sum()
+
+    # # For the regression coefficients, we actually need to sum over i and j.
+    # dev['W'] = np.zeros(nf)
+    # membs = P[train_uids]
+    # sbias = s[train_uids]
+    # cbias = c[train_iids]
+    # for i in xrange(train_x.shape[0]):
+    #     dev['W'] += abs(membs[i].T.dot(W)[0] * train_x[i])
+
+    # # Calculate total absolute deviation over all records.
+    # T = dev['s'] + dev['c'] + dev['W'].sum()
+
+    # # Now calculate importances.
+    # imp = {k: dev[k] / T for k in dev}
+
+    # colname = 'Importance'
+    # I = pd.DataFrame(imp['W'], index=train.drop(data_keys, axis=1).columns)\
+    #       .rename(columns={0: colname})
+    # I.ix[uid] = imp['s']
+    # I.ix[iid] = imp['c']
+    # I = I.sort(colname, ascending=False)
+
+    # # Plot feature importance.
+    # deep_blue = sns.color_palette('colorblind')[0]
+    # ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+    # ax.set(title='Feature Importance for Grade Prediction',
+    #        ylabel='Feature',
+    #        xlabel='Proportion of Deviation From Intercept')
+    # ax.figure.show()
