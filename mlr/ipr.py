@@ -9,6 +9,9 @@ import scipy as sp
 import seaborn as sns
 from sklearn import preprocessing
 
+from cipr import (
+    fit_ipr_sgd, compute_errors, compute_rmse, ipr_predict, rmse_from_err)
+
 
 # Error codes
 BOUNDS_FORMAT = 1000
@@ -221,28 +224,6 @@ def read_data(train_file, test_file, conf_file):
             indices, nents)
 
 
-def rmse_from_err(err):
-    return np.sqrt((err ** 2).sum() / err.shape[0])
-
-def ipr_predict(model, eids, X, nb):
-    """Make predictions for each feature vector in X using the IPR model."""
-    w0 = model['w0']
-    w = model['w']
-    P = model['P'][eids]
-    W = model['W']
-
-    B = X[:, :nb]
-    X = X[:, nb:]
-    return w0 + B.dot(w) + (X.dot(W.T) * P).sum(axis=1)
-
-def compute_errors(model, eids, X, y, nb):
-    return y - ipr_predict(model, eids, X, nb)
-
-def compute_rmse(model, eids, X, y, nb):
-    errors = compute_errors(model, eids, X, y, nb)
-    return rmse_from_err(errors)
-
-
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
@@ -257,7 +238,7 @@ def make_parser():
         '-te', '--test',
         help='path of test data file in csv format')
     parser.add_argument(
-        '-l', '--nmodels',
+        '-k', '--nmodels',
         type=int, default=3,
         help='number of linear regression models')
     parser.add_argument(
@@ -280,14 +261,14 @@ def make_parser():
         type=int, default=10,
         help='number of iterations')
     parser.add_argument(
+        '-e', '--epsilon',
+        type=float, default=0.0001,
+        help='stopping threshold for early stopping test')
+    parser.add_argument(
         '-s', '--init-std',
         type=float, default=(1. / 2 ** 4),
         help='standard deviation of Gaussian noise used in model param'
              'initialization')
-    parser.add_argument(
-        '-t', '--target',
-        default='grade',
-        help='target variable to predict; default is "grade"')
     parser.add_argument(
         '-n', '--nonneg',
         action='store_true', default=False,
@@ -302,22 +283,9 @@ def make_parser():
     #     help='directory to save model params to; default is none: do not save')
     parser.add_argument(
         '-f', '--feature-guide',
+        default='',
         help='file to specify target, categorical, and real-valued features; '
              'see the docstring for more detailed info on the format')
-
-    parser.add_argument(
-        '-lr', '--lrate',
-        type=float, default=0.5,
-        help='stepsize for parameter updates')
-    parser.add_argument(
-        '-e', '--epsilon',
-        type=float, default=0.0001,
-        help='stopping threshold for early stopping test')
-    parser.add_argument(
-        '-mt', '--max-tries',
-        type=int, default=3,
-        help='maximum number of times to try updating a parameter before moving'
-             'on to the next one; default is 3')
     return parser
 
 
@@ -352,207 +320,21 @@ if __name__ == "__main__":
         logging.error(e.message)
         sys.exit(errno)
 
-    # Extract model parameters from cmdline args.
-    k=args.nmodels
-    lambda_w=args.lambda_w
-    lambda_b=args.lambda_b
-    iters=args.iters
-    std=args.init_std
-    nn=args.nonneg
-    verbose=args.verbose
-
-    lrate=args.lrate
-    eps=args.epsilon
-    max_tries=args.max_tries
-
-    b1 = np.unique(eids).shape[0]  # num unique values for entity to profile
-    n, nf = X.shape  # num training examples and num features
-    p = nf - nb  # num non-entity predictor variables
-
-    # Init params.
-    w0 = 0
-
-    dtype = np.float128
-    w = np.zeros(nb).astype(dtype)
-    # P_zeros = np.zeros((b1, k)).astype(dtype)
-    P = np.random.normal(0.1, std, (b1, k))
-    # W_zeros = np.zeros((k, p)).astype(dtype)
-    W = np.random.normal(0.1, std, (k, p)).astype(dtype)
-
-    model = {
-        'w0': w0,
-        'w': w,
-        'P': P,
-        'W': W
-    }
-
-    # Data setup.
-    y = y.astype(dtype)
-    X = X.tocsc().astype(dtype)
-    B_t = X[:, :nb]  # n x nb
-    X_t = X[:, nb:]  # n x p
-
-    # Precompute error.
-    err = compute_errors(model, eids, X, y, nb)
-    logging.info('initial RMSE:\t%.4f' % rmse_from_err(err))
-
-    # Update w0. Same as w0 = y.mean() on first iteration.
-    w0_new = (err - w0).sum() / n
-    err += (w0 - w0_new)
-    w0 = w0_new
-
-    model['w0'] = w0
-    rmse = compute_rmse(model, eids, X, y, nb)
-    prev_rmse = np.inf
-    logging.info('Train RMSE after w0:\t%.4f' % rmse)
-
-    # Set lrate; necessary to avoid overzealous steps. Why?
-    lrate = 0.5
-    eps = 0.0001
-    max_tries = 3
-
-    # Make lists of indices to be permuted.
-    b_indices = range(nb)
-    p_indices = range(p)
-    k_indices = range(k)
-    e_indices = range(b1)
-
-    start = time.time()
-    logging.info('training model for %d iterations' % iters)
-    for inum in range(iters):
-        elapsed = time.time() - start
-        logging.info('iteration %03d\t(%.2fs)' % (inum + 1, elapsed))
-
-        # Update w for each entity feature f.
-        old_w = w.copy()
-        tmp_rmse = rmse
-        num_tries = 0
-        while tmp_rmse - rmse <= eps:
-            for f in np.random.permutation(b_indices):
-                w_f = w[f]
-                B_tf = B_t[:,f]
-                rows = B_tf.indices
-                dat = B_tf.data
-                sq_sum = (dat ** 2).sum()
-                wf_new = lrate * ((err[rows] * dat - w_f * sq_sum) / sq_sum)[0]
-                if nn:
-                    wf_new = np.maximum(0, wf_new)
-
-                err[rows] += (w_f - wf_new) * dat
-                w[f] = wf_new
-
-            err = compute_errors(model, eids, X, y, nb)
-            rmse = rmse_from_err(err)
-            if tmp_rmse - rmse < eps:
-                w = old_w
-                if num_tries > max_tries:
-                    rmse = tmp_rmse
-                    break
-                else:
-                    num_tries += 1
-                    lrate *= 0.5
-
-        logging.info('train RMSE after w:\t%.4f' % rmse)
-
-        # Update W for each feature f and model l.
-        old_W = W.copy()
-        tmp_rmse = rmse
-        num_tries = 0
-        while tmp_rmse - rmse <= eps:
-            for f in np.random.permutation(p_indices):
-                X_f = X_t[:,f]  # n x 1
-                rows = X_f.indices
-                for l in np.random.permutation(k_indices):
-                    W_lf = W[l,f]
-                    P_l = P[:,l]  # n x 1
-
-                    weighted_fs = P_l[eids][rows] * X_f.data
-                    sq_sum = (weighted_fs ** 2).sum()
-                    numer = W_lf * sq_sum - (err[rows] * weighted_fs).sum()
-                    Wlf_new = (numer / (lambda_w - sq_sum)) * (lrate * 0.5)
-                    if nn:
-                        Wlf_new = np.maximum(0, Wlf_new)
-
-                    err[rows] += (W_lf - Wlf_new) * weighted_fs
-                    W[l,f] = Wlf_new
-
-            # Recompute error to avoid rounding errors.
-            err = compute_errors(model, eids, X, y, nb)
-            rmse = rmse_from_err(err)
-            if tmp_rmse - rmse < eps:
-                W = old_W
-                if num_tries > max_tries:
-                    rmse = tmp_rmse
-                    break
-                else:
-                    num_tries += 1
-                    lrate *= 0.5
-
-        logging.info('train RMSE after W:\t%.4f' % rmse)
-
-        # Update P for each primary entity value i and each model l.
-        old_P = P.copy()
-        tmp_rmse = rmse
-        num_tries = 0
-        while tmp_rmse - rmse <= eps:
-            for l in np.random.permutation(k_indices):
-                P_l = P[:,l]
-                W_l = W[l]
-                reg_sums = X_t.dot(W_l)
-                sq_sum = (reg_sums ** 2).sum()
-                for i in np.random.permutation(e_indices):
-                    P_il = P_l[i]
-                    Pil_new = ((P_il * sq_sum - (err * reg_sums).sum()) /
-                               (lambda_w - sq_sum)) * (lrate * 0.5)
-                    if nn:
-                        Pil_new = np.maximum(0, Pil_new)
-
-                    err += (P_il - Pil_new) * reg_sums
-                    P[i,l] = Pil_new
-
-            # recompute err to correct rounding errors.
-            err = compute_errors(model, eids, X, y, nb)
-            rmse = rmse_from_err(err)
-            if tmp_rmse - rmse < eps:
-                P = old_P
-                if num_tries > max_tries:
-                    rmse = tmp_rmse
-                    break
-                else:
-                    num_tries += 1
-                    lrate *= 0.5
-
-        logging.info('train RMSE after P:\t%.4f' % rmse)
-
-        # Stopping check.
-        if prev_rmse - rmse < eps:
-            logging.info('reached stopping threshold')
-            break
-        else:
-            prev_rmse = rmse
-
-            # Randomly reset some values to 0s.
-            bc = int(nb * 0.02)
-            ec = int(b1 * 0.02)
-            pc = int(p * 0.02)
-
-            for f in np.random.choice(p_indices, bc, replace=False):
-                w[int(f)] = 0
-
-            for i in np.random.choice(e_indices, ec, replace=False):
-                l = int(np.random.choice(k_indices))
-                P[i,l] = 0
-
-            for f in np.random.choice(p_indices, pc, replace=False):
-                l = int(np.random.choice(k_indices))
-                W[l,int(f)] = np.random.normal(0, std)
-
-
-    elapsed = time.time() - start
-    logging.info('total time elapsed:\t(%.2fs)' % elapsed)
+    # Train IPR model.
+    model = fit_ipr_sgd(
+        X, y, eids, nb,
+        k=args.nmodels,
+        lambda_w=args.lambda_w,
+        lambda_b=args.lambda_b,
+        iters=args.iters,
+        std=args.init_std,
+        nn=args.nonneg,
+        verbose=args.verbose,
+        lrate=args.lrate,
+        eps=args.epsilon)
 
     logging.info('making predictions')
-    err = test_y - ipr_predict(model, test_eids, test_X.tocsc(), nb)
+    err = test_y - ipr_predict(model, test_X.tocsc(), test_eids, nb)
     print 'IPR RMSE:\t%.4f' % rmse_from_err(err)
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
