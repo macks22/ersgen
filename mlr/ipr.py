@@ -156,7 +156,7 @@ def read_data(train_file, test_file, conf_file):
     test = read_file('test', test_file)
     nd_train = train.shape[0]
     nd_test = test.shape[0]
-    logging.info('number of dyads: train=%d, test=%d' % (nd_train, nd_test))
+    logging.info('number of instances: train=%d, test=%d' % (nd_train, nd_test))
 
     # Separate X, y for train/test data.
     train_y = train[target].values
@@ -350,52 +350,115 @@ if __name__ == "__main__":
 
 
     # Calculate feature importance metrics.
-    # nd = number of nonzero observations
-    # uniq_uids = np.unique(train_uids)
-    # item_count = np.vectorize(lambda i: train[train[uid] == i].shape[0])
-    # m = item_count(uniq_uids)
+    X = X.tocsr()
+    X_ = X[:, nb:]  # n x p
 
-    # user_count = np.vectorize(lambda j: train[train[iid] == j].shape[0])
-    # uniq_iids = np.unique(train_iids)
-    # n = user_count(uniq_iids)
+    # Extract model params from returned dict.
+    w = model['w']
+    P = model['P']
+    W = model['W']
 
-    # # Extract model params from returned dict.
-    # w = model['w']
-    # P = model['P']
-    # W = model['W']
+    # Read in training data for use of DataFrame.
+    cols = [name for name, count in f_indices]
+    train = pd.read_csv(args.train, usecols=cols)
+    target, ents, cats, reals = read_feature_guide(args.feature_guide)
+    nents = len(ents)  # number of entities
 
-    # # Calculate individual deviation contributions.
-    # dev = {}
+    n, nf = X.shape  # num training examples and num features
+    p = nf - nb  # num non-entity predictor variables
+    k = args.nmodels
+    idx_table = dict(f_indices)
 
-    # # importance of bias terms
-    # dev['s'] = (m * s).sum()
-    # dev['c'] = (n * c).sum()
+    # Deviation calculations will be stored here.
+    dev = {}
 
-    # # For the regression coefficients, we actually need to sum over i and j.
-    # dev['W'] = np.zeros(nf)
-    # membs = P[train_uids]
-    # sbias = s[train_uids]
-    # cbias = c[train_iids]
-    # for i in xrange(train_x.shape[0]):
-    #     dev['W'] += abs(membs[i].T.dot(W)[0] * train_x[i])
+    # Start by taking absolute values of all parameters.
+    w = abs(w)
+    P = abs(P)
+    W = abs(W)
+    X_ = abs(X_)
 
-    # # Calculate total absolute deviation over all records.
-    # T = dev['s'] + dev['c'] + dev['W'].sum()
+    # Calculate deviations for the entity bias terms.
+    bi_prev = 0
+    for i, ent in enumerate(ents):
+        b_i = idx_table[ent]
+        weights = w[bi_prev: b_i]
+        bi_prev = b_i
 
-    # # Now calculate importances.
-    # imp = {k: dev[k] / T for k in dev}
+        uniq_ids = np.unique(train[ent])
+        nz_count = np.vectorize(lambda i: train[train[ent] == 1].shape[0])
+        nnz = nz_count(uniq_ids)
+        dev[ent] = (weights * nnz).sum()
 
-    # colname = 'Importance'
-    # I = pd.DataFrame(imp['W'], index=train.drop(data_keys, axis=1).columns)\
-    #       .rename(columns={0: colname})
-    # I.ix[uid] = imp['s']
-    # I.ix[iid] = imp['c']
-    # I = I.sort(colname, ascending=False)
+    # Next calculate deviation for the rest of the features.
+    membs = P[eids]  # n x k
+    fdev_pprof = X_.T.dot(membs).T * W  # dev per profile
+    fdev = fdev_pprof.sum(axis=0)  # dev across profiles
 
-    # # Plot feature importance.
-    # deep_blue = sns.color_palette('colorblind')[0]
-    # ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
-    # ax.set(title='Feature Importance for Grade Prediction',
-    #        ylabel='Feature',
-    #        xlabel='Proportion of Deviation From Intercept')
-    # ax.figure.show()
+    n_prev = 0
+    for f, fname in enumerate(cats + reals):
+        n_f = idx_table[fname] - nb
+        dev[fname] = fdev[n_prev: n_f].sum()
+        n_prev = n_f
+
+    # Calculate total absolute deviation over all records.
+    # dev = pd.DataFrame(dev.values(), index=dev.keys(), columns=['dev'])
+    # T = dev.sum()
+    T = sum(dev.values())
+
+    # Now calculate importances.
+    colname = 'Importance'
+    imp = {k: dev[k] / T for k in dev}
+    I = pd.DataFrame(imp.values(), index=imp.keys(), columns=[colname])
+    I = I.sort(colname, ascending=False)
+
+    # Plot feature importance.
+    deep_blue = sns.color_palette('colorblind')[0]
+    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+    ax.set(title='Feature Importance for Grade Prediction',
+           ylabel='Feature',
+           xlabel='Proportion of Deviation From Intercept')
+    ax.figure.show()
+
+    # Calculate profile contributions.
+    membs = P[eids]         # n x k
+    reg = X_.dot(W.T)       # n x k
+    contribs = membs * reg  # n x k
+    contribs /= contribs.sum(axis=1)[:, np.newaxis]
+
+    # Calculate feature importance per profile.
+    devs = [{} for _ in xrange(k)]
+    n_prev = 0
+    for f, fname in enumerate(cats + reals):
+        n_f = idx_table[fname] - nb
+        for l in xrange(k):
+            devs[l][fname] = fdev_pprof[l][n_prev: n_f].sum()
+        n_prev = n_f
+
+    # Add in entity bias deviations.
+    for l in xrange(k):
+        for ent in ents:
+            devs[l][ent] = dev[ent]
+
+    imp = [{k: _dev[k] / T for k in _dev} for _dev in devs]
+    sortby = 'Feature'
+    I_pprof = pd.DataFrame(imp)\
+                .unstack(1)\
+                .reset_index()\
+                .rename(columns={'level_0': sortby,
+                                 'level_1': 'Model',
+                                 0: colname})
+    I_pprof[sortby] = I_pprof[sortby].astype('category')
+    I_pprof[sortby].cat.set_categories(I.index, inplace=True)
+    I_pprof.sort(sortby, inplace=True)
+
+    # Plot the results.
+    sns.plt.figure()
+    ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
+    ax.set(title='Feature Importance Per Model', xlabel=colname)
+    ax.figure.show()
+
+    # g = sns.FacetGrid(data=I_pprof, col='Model')
+    # ax = g.map(sns.barplot, 'Importance', 'Feature')
+    # g.set(title='Feature Importance Per Model')
+    # g.fig.show()
