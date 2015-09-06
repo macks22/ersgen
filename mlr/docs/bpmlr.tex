@@ -54,6 +54,7 @@
 \usepackage{bbm}
 \usepackage{amssymb}
 \usepackage{mathtools}
+\usepackage{etoolbox}
 % A popular package from the American Mathematical Society that provides
 % many useful and powerful commands for dealing with mathematics. If using
 % it, be sure to load this package with the cmex10 option to ensure that
@@ -175,7 +176,6 @@
 % New commands to be used in this report.
 \newcommand*{\Scale}[2][4]{\scalebox{#1}{$#2$}}%
 \newcommand*{\Resize}[2]{\resizebox{#1}{!}{$#2$}}%
-\newcommand{\eqalign}[1]{{\footnotesize\begin{align}{#1}\end{align}}}
 \newcommand{\norm}[1]{\left\lVert#1\right\rVert}
 \newcommand{\pluseq}{\mathrel{+}=}
 \newcommand{\mineq}{\mathrel{-}=}
@@ -183,11 +183,13 @@
 \newcommand{\elips}[1]{\ldots#1\allowbreak}
 \newcommand{\bc}{,\allowbreak}
 
+\AtBeginEnvironment{align}{\par\footnotesize}
+\AfterEndEnvironment{align}{\normalsize}
+\AtBeginEnvironment{align*}{\par\footnotesize}
+\AfterEndEnvironment{align*}{\normalsize}
+
 \newtheorem{lemma}{Lemma}
 \newtheorem{proof}{Proof}
-
-%\DeclareMathSizes{display size}{text size}{script size}{scriptscript size}.
-\DeclareMathSizes{6}{6}{5}{4}
 
 
 \begin{document}
@@ -267,9 +269,9 @@ comprised of four parameters:
 %
 Predictions are made using:
 %
-\begin{equation}
+\begin{align}
     \hat{g}(i,j) = \bm{s}_i + \bm{c}_j + P_i^T W \bm{D}_{i,j}.
-\end{equation}
+\end{align}
 %
 We say that the matrix $\hat{G}$ is the matrix of predicted grades, such that
 $\hat{G}_{i,j} = \hat{g}(i, j)$.
@@ -458,17 +460,16 @@ derivation of efficient learning procedures for the IPR model.
     individual model parameter. Therefore we can represent it as a sum of
     multiplicative terms $\beta$ and additive terms $\alpha$, as follows:
 %%
-    \begin{equation}  \label{eq:yhat-decomp}
+    \begin{align}  \label{eq:yhat-decomp}
         \hat{y}(t | \theta) = \theta\beta_\theta(t) + \alpha_\theta(t).
-    \end{equation}
+    \end{align}
 \end{lemma}
 
 \begin{proof}
     To prove this, we simply state $\beta$ and $\alpha$ explicitly for each
     $\theta \in \Theta$, decomposing (\ref{eq:ipr-opt}).
 %%
-    {\footnotesize
-    \begin{flalign}
+    \begin{align}
         \hat{y}(t | w_0) &= \begin{aligned}[t]  \label{eq:decomp-w0}
             w_0 \underbrace{(1)}_{\beta_{(w_0)}(t)} +
             \underbrace{
@@ -508,8 +509,7 @@ derivation of efficient learning procedures for the IPR model.
                             W_{l',f'} \bm{X}_{t,f'}
             }_{\alpha_{(W_{l,f})}(t)}
         \end{aligned}
-    \end{flalign}%
-    }%
+    \end{align}
 \end{proof}
 
 
@@ -524,8 +524,7 @@ derivation of efficient learning procedures for the IPR model.
     Again the proof comes from simply stating $\beta$ and $\alpha$ for each
     $\theta$.
 %%
-    {\footnotesize
-    \begin{flalign}
+    \begin{align}
         \hat{y}(t | \bm{w}) &= \begin{aligned}[t]  \label{eq:decomp-w}
             \bm{w}^T \underbrace{(\bm{B}_t)}_{\beta_{(w_0)}(t)} +
             \underbrace{
@@ -550,8 +549,7 @@ derivation of efficient learning procedures for the IPR model.
                 w_0 + \bm{w}^T \bm{B}_t
             }_{\alpha_{(W)}(t)}
         \end{aligned},
-    \end{flalign}%
-    }%
+    \end{align}
 %
     where the operator $\mathrel{.*}$ is borrowed from Matlab and denotes
     elementwise matrix multiplication.
@@ -635,26 +633,25 @@ with SGD, we update them one entry at a time.
     single parameter $\theta$ given all other parameters $\Theta / {\theta}$ for
     a linear model $\hat{y}(t| \Theta / {\theta})$ is:
 %%
-    \begin{equation}  \label{eq:theta-update}
+    \begin{align}  \label{eq:theta-update}
         \theta =
             \frac{-\sum_{t \in A} (\bm{Y}_t - \alpha_\theta(t)) \beta_\theta(t)}
                  {\lambda_\theta - \sum_{t \in A} \beta_\theta^2(t)}
-    \end{equation}
+    \end{align}
 \end{lemma}
 
 \begin{proof}
     To find the solution analytically, the first derivative of (\ref{eq:obj})
     w.r.t $\theta$ must be found:
 %%
-    \begin{equation} \label{eq:ipr-obj-derivative}
+    \begin{align} \label{eq:ipr-obj-derivative}
         \frac{ \partial \mathcal{F}}{ \partial\theta } =
             \sum_{t \in A} 2(\bm{Y}_t - \hat{y}(t)) \beta_\theta(t) +
             2\theta\lambda_\theta
-    \end{equation}
+    \end{align}
 %%
     The minimum is where this derivative is equal to 0:
 %%
-    {\footnotesize
     \begin{align*}
         & \hphantom{==} \begin{aligned}[t]
             0 &=
@@ -677,8 +674,7 @@ with SGD, we update them one entry at a time.
                 \frac{-\sum_{t \in A} (\bm{Y}_t - \alpha_\theta(t)) \beta_\theta(t)}
                      {\lambda_\theta - \sum_{t \in A} \beta_\theta^2(t)}
         \end{aligned}
-    \end{align*}%
-    }%
+    \end{align*}
 \end{proof}
 
 Working from the results in Section \ref{theoretical-foundations}, we see that
@@ -879,90 +875,80 @@ basic PMLR model.
 
 The likelihood of a particular grade $G_{i,j}$ is defined by:
 
-\begin{equation}
+\begin{align}
     p(G | \bm{s}, \bm{c}, P, W, \alpha_G, \bm{X}) =
         \prod_{i=1}^n \prod_{j=1}^m
             \mathcal{N}(G_{i,j} | \hat{G}_{i,j}, \alpha_G),
-\end{equation}
+\end{align}
 
 where
 
-\begin{equation}
+\begin{align}
     \hat{G}_{i,j} = \bm{s}_i + \bm{c}_j + P_i^TW\bm{X}_{i,j}
-\end{equation}
+\end{align}
 
 The four parameters $\bm{s}, \bm{c}, P, W$, and their hyperparameters are drawn
 from the following distributions:
 
-\begin{equation}
+\begin{align}
     p(\bm{s} | \mu_s, \alpha_s) =
         \prod_{i=1}^n \mathcal{N}(\bm{s}_i | \mu_s, \alpha_s)
-\end{equation}
+\end{align}
 
-\begin{equation}
-\begin{aligned}
+\begin{align}
     &p(\mu_s, \alpha_s | \mu_0, \kappa_0, \alpha_0, \beta_0) \\
         & = p(\mu_s | \alpha_s) p(\alpha_s) \\
         & = \mathcal{N}(\mu_s | \mu_0, (\kappa_0 \alpha_s))
             \Gamma(\alpha_s | \alpha_0, \beta_0)
-\end{aligned}
-\end{equation}
+\end{align}
 
-\begin{equation}
+\begin{align}
     p(\bm{c} | \mu_c, \alpha_c) =
         \prod_{j=1}^m \mathcal{N}(\bm{c}_j | \mu_c, \alpha_c)
-\end{equation}
+\end{align}
 
-\begin{equation}
-\begin{aligned}
+\begin{align}
     &p(\mu_c, \alpha_c | \mu_0, \kappa_0, \alpha_0, \beta_0) \\
         & = p(\mu_c | \alpha_c) p (\alpha_c) \\
         & = \mathcal{N}(\mu_c | \mu_0, (\kappa_0 \alpha_c))
             \Gamma(\alpha_c | \alpha_0, \beta_0)
-\end{aligned}
-\end{equation}
+\end{align}
 
-\begin{equation}
+\begin{align}
     p(P | \bm{\mu_P}, \Lambda_P) =
         \prod_{i=1}^n \mathcal{N}(P_i | \bm{\mu_P}, \Lambda_P)
-\end{equation}
+\end{align}
 
-\begin{equation}
-\begin{aligned}
+\begin{align}
     &p(\bm{\mu_P}, \Lambda_P | \bm{\mu_0}, \kappa_0, W_0, d_0) \\
         & = p(\bm{\mu_P} | \Lambda_P) p(\Lambda_P) \\
         & = \mathcal{N}(\bm{\mu_P} | \bm{\mu_0}, [\kappa_0 \Lambda_P])
             \mathcal{W}(\Lambda_P | W_0, d_0)
-\end{aligned}
-\end{equation}
+\end{align}
 
-\begin{equation}
+\begin{align}
     p(W | \bm{\mu_W}, \Lambda_W) =
         \prod_{l=1}^M \mathcal{N}(W_l | \bm{\mu_W}, \Lambda_W)
-\end{equation}
+\end{align}
 
-\begin{equation}
-\begin{aligned}
+\begin{align}
     &p(\bm{\mu_W}, \Lambda_W | \bm{\mu_0}, \kappa_0, W_0, d_0) \\
         & = p(\bm{\mu_W} | \Lambda_W) p(\Lambda_W) \\
         & = \mathcal{N}(\bm{\mu_W} | \bm{\mu_0}, [\kappa_0 \Lambda_W])
             \mathcal{W}(\Lambda_W | W_0, d_0)
-\end{aligned}
-\end{equation}
+\end{align}
 
 
 \subsection{Inference: Gibbs Sampler}
 
 %% CPD for student bias vector: s
 \begin{mdframed}[style=eqbox]
-\begin{equation} \label{eqn:cpd-s}
-\begin{aligned}
+\begin{align} \label{eqn:cpd-s}
     &p(\bm{s}_i | \bm{c}, P, W, \bm{X}, G, \alpha_G, \Theta_s)
         = \mathcal{N}(\bm{s}_i | \mu_{s_i}^*, \alpha_{s_i}^*) \\
         & \sim \mathcal{N}(\bm{s}_i | \mu_s, \alpha_s)
                \prod_{j=1}^m \mathcal{N}(G_{i,j} | \hat{G}_{i,j}, \alpha_G)
-\end{aligned}
-\end{equation}
+\end{align}
 
 where
 
@@ -985,14 +971,12 @@ where
 
 %% CPD for course bias vector: c
 \begin{mdframed}[style=eqbox]
-\begin{equation} \label{cpd-c}
-\begin{aligned}
+\begin{align} \label{cpd-c}
     &p(\bm{c}_j | \bm{s}, P, W, \bm{X}, G, \alpha_G, \Theta_c)
         = \mathcal{N}(\bm{c}_j | \mu_{c_j}^*, \alpha_{c_j}^*) \\
         & \sim \mathcal{N}(\bm{c}_j | \mu_c, \alpha_c)
                \prod_{i=1}^n \mathcal{N}(G_{i,j} | \hat{G}_{i,j}, \alpha_G)
-\end{aligned}
-\end{equation}
+\end{align}
 
 where
 
@@ -1016,14 +1000,12 @@ where
 %% CPD for student membership matrix: P
 \begin{mdframed}[style=eqbox]
 {\setlength{\mathindent}{0cm}
-\begin{equation} \label{cpd-P}
-\begin{aligned}
+\begin{align} \label{cpd-P}
     &p(P_i | \bm{s}, \bm{c}, W, \bm{X}, G, \Theta_P) =
         \mathcal{N}(P_i | \bm{\mu}_{P_i}^*, \Lambda_{P_i}^*) \\
         & \sim p(P_i | \bm{\mu_P}, \Lambda_P)
             \prod_{j=1}^m \mathcal{N}(G_{i,j} | \hat{G}_{i,j}, \alpha_G)
-\end{aligned}
-\end{equation}
+\end{align}
 
 where
 
@@ -1051,15 +1033,13 @@ where
 %% CPD for regression coefficient matrix: W
 \begin{mdframed}[style=eqbox]
 {\setlength{\mathindent}{0cm}
-\begin{equation} \label{cpd-W}
-\begin{aligned}
+\begin{align} \label{cpd-W}
     &p(W_l | \bm{s}, \bm{c}, P, \bm{X}, G, \Theta_W) =
         \mathcal{N}(W_l | \bm{\mu}_{W_l}^*, \Lambda_{W_l}^*) \\
         & \sim \mathcal{N}(W_l | \bm{\mu_W}, \Lambda_W)
             \sum_{i=1}^n \sum_{j=1}^m
                 \mathcal{N}(G_{i,j} | \hat{G}_{i,j}, \alpha_G)
-\end{aligned}
-\end{equation}
+\end{align}
 
 where
 
@@ -1085,6 +1065,99 @@ where
 %% END: CPD for W
 
 
+\section{Feature Importance and Profile Memberships}\label{imp-membs}
+
+Having derived efficient learning procedures for the IPR model, we next turn to
+interpreting the learned parameters. With our unconstrained parameter space, we
+end up with positive and negative values for parameters, so the formulas used by
+Elbadraway et al. for feature importance do not carry over simply. We adapt
+these formulas to work for parameters in the whole real space. We'd like to
+intuitively understand how much of the variance is captured by each unique
+feature. So for each entity, we'd like to know how important each bias term is
+for explaining the variance in the data. Also for each feature, we'd like to
+know how important it is overall as well as how important it is for each entity
+profile. Finally, we'd like to group our entities based on profile memberships
+in order to better understand the general characteristics of the primary
+entities. For this purpose, we derive several importance metrics. We work from
+the notion of mean absolute deviation. For each feature and entity bias, we find
+the proportion of the absolute deviation from the intercept. We begin by
+computing the total deviation from the intercept per record and over all
+observed records $A$:
+%
+\begin{align}
+    \sigma(t | \Theta) &=
+        \sum_{j=1}^{b^*} | w_j B_{t,j} |
+        + \sum_{l=1}^k \left|
+            P_{il} \sum_{f=1}^p | W_{l,f} X_{t,f} |
+        \right|  \\
+%%
+    \sigma^* &= \sum_{t \in A} \sigma(t | \Theta)
+\end{align}
+%
+$\sigma^*$ gives the total deviation from the intercept over all records. We
+next turn to distinguishing the deviations from each individual component of the
+predictive function, starting with the entities. Recall that we have $e$
+entities, with $b_1, \elips{,} b_e$ unique values per entity. By convention, the
+first entity $e_1$ is the primary entity. For each entity $e_i$, we'd like to
+know the importance of the bias terms. We define $b_0 = 0$ and calculate
+deviation per entity as:
+%
+\begin{align}
+    \sigma(e_i | t) &= \sum_{j=b_{i-1}}^{b_i} | w_j \bm{B}_{t,j} |, \\
+%%
+    \sigma(e_i) &= \sum_{t \in A} \sigma(e_i | t), \\
+    \nonumber
+                &\hspace{6mm}i = 1, \elips{,} e.
+\end{align}
+%
+Given the deviation caused by each entity, we can compute the importance of the
+entity bias terms with:
+%
+\begin{align}
+    I(e_i) = \frac{\sigma(e_i)}{\sigma^*}
+\end{align}
+%
+The formulas for the rest of the features have a similar form. We look at the
+importance of each feature per each profile and also the overall importance of
+each feature.
+%
+\begin{align}
+    \sigma(\bm{X}_{t,f}) &= \sum_{l=1}^k | P_{i,l} W_{l,f} \bm{X}_{t,f} |  \\
+%%
+    \sigma(f, l) &= \sum_{t \in A} | P_{i,l} W_{l,f} \bm{X}_{t,f} | \\
+%%
+    \sigma(f) &= \sum_{t \in A} \sigma(\bm{X}_{t,f})
+               = \sum_{l=1}^k \sigma(f, l)  \\
+%%
+    I(f, l) &= \frac{\sigma(f, l)}{\sigma^*}  \\
+%%
+    I(f) &= \frac{\sigma(f)}{\sigma^*}
+\end{align}
+
+Note that the deviation calculations for the entity bias terms assume
+one-hot-encoding of the categorical entity identifiers. If any of the other
+features are encoded similarly, the overall importance can simply be calculated
+by summing the importance of the post-encoding feature space that makes up each
+categorical feature. Having explored the individual feature importance metrics,
+we next move to the general profiling metrics. We would like to group the
+primary entites based on what extent they are described by each profile.
+Afterwards, we would like to characterize each profile by the relative
+importance of each feature in that particular profile. This two-step procedure
+will help us better understand the characteristics of the primary entities. We
+can group the entities based on the proportion of each profile's contribution to
+the absolute deviation. Then we can use the importance of feature $f$ in
+profile $l$, defined as $I(f, l)$ above, to determine the relative
+characteristics of each profile.
+%
+\begin{align}
+    \sigma(i, l) &= \sum_{t \in A} \left|
+        P_{i,l} \sum_{f=1}^p | W_{l,f} \bm{X}_{t,f} |
+    \right|  \\
+%%
+    M(i, l) &= \frac{\sigma(i, l)}{\sum_{l=1}^k \sigma(i, l)}
+\end{align}
+
+
 \section{Derivations}\label{derivations}
 
 \setlength{\belowdisplayskip}{6pt} \setlength{\belowdisplayshortskip}{6pt}
@@ -1094,11 +1167,11 @@ In this section, derivations for the semi-conjugate posterior distributions of P
 and W are given. First we show derivations for a simplified version of the model
 without the bias terms, so we have:
 %
-\begin{equation}
+\begin{align}
     \hat{G}_{ij} = P_i^T W X_{ij}
-\end{equation}
+\end{align}
 %
-\begin{flalign}
+\begin{align}
     &p(P | W, \bm{X}, \mu_P, \Lambda_P)  \\
         \nonumber
         &= \prod_{i=1}^N \mathcal{N}(P_i | \mu_P, \Lambda_P)
@@ -1109,11 +1182,11 @@ without the bias terms, so we have:
         &=  \prod_{l=1}^L\mathcal{N}(W_l | \mu_W, \Lambda_W)
             \prod_{i=1}^N \prod_{j=1}^M
                 \mathcal{N}(G_{ij} | \hat{G}_{ij}, \alpha_G)
-\end{flalign}
+\end{align}
 %
 So for a single row $P_i$, we have conditional distribution:
 %
-\begin{flalign}
+\begin{align}
     &p(P_i | W, \bm{X}, \mu_P, \Lambda_P)  \\
     \nonumber
     &=  \mathcal{N}(P_i | \mu_P, \Lambda_P)
@@ -1173,7 +1246,7 @@ So for a single row $P_i$, we have conditional distribution:
 %%
     &\propto
         \mathcal{N}(P_i | \mu_{P_i}^*, \Lambda_{P_i}^*),
-\end{flalign}
+\end{align}
 %
 where
 %
