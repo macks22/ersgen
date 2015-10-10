@@ -103,7 +103,7 @@ def fit_ipr_sgd(
     cdef np.ndarray[np.double_t, ndim=1] P_i
     cdef object X_, B_
 
-    # Data setup.
+    # Data setup. We assume bias terms are stored in the first nb columns.
     y = y.astype(dtype)
     X = X.tocsr().astype(dtype)
     B_ = X[:, :nb]  # n x nb

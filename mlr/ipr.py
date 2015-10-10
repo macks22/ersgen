@@ -27,6 +27,21 @@ class BadFeatureConfig(Exception):
     """Raise when bad feature configuration file is found."""
     pass
 
+class UnlearnedModel(Exception):
+    """Raise when trying to predict with unlearned model."""
+
+    def __init__(self, message, params):
+        """params is a list of params not yet learned."""
+        self.message = message
+        self.params = params
+
+    def __repr__(self):
+        return "UnlearnedModel: %s [%s]" % (
+            self.message, ', '.join(self.params))
+
+    def __str__(self):
+        return self.__repr__()
+
 
 def read_feature_guide(fname):
     """Read the feature guide and parse out the specification.
@@ -225,6 +240,189 @@ def read_data(train_file, test_file, conf_file):
             indices, nents)
 
 
+class IPR(object):
+    """Individualized Profile Regression model."""
+
+    def __init__(self, k, lambda_w, lambda_b, iters, lrate, epsilon, std,
+                 nonneg, verbose):
+        """Initialize the model. This sets all parameters that govern learning.
+        If the files are passed in, they are read and the data is cached in the
+        initialized object.
+
+        See the make_parser method for detail on parameters.
+        """
+        self.k = k
+        self.lambda_w = lambda_w
+        self.lambda_b = lambda_b
+        self.iters = iters
+        self.lrate = lrate
+        self.epsilon = epsilon
+        self.std = std
+        self.nonneg = nonneg
+        self.verbose = verbose
+
+        # all model params initially set to None
+        self.model = {attr: None for attr in self.param_names}
+
+    @property
+    def param_names(self):
+        return ('w0', 'w', 'P', 'W')
+
+    @property
+    def w0(self):
+        return self.model['w0']
+
+    @property
+    def w(self):
+        return self.model['w']
+
+    @property
+    def P(self):
+        return self.model['P']
+
+    @property
+    def W(self):
+        return self.model['W']
+
+    def fit(self, X, y, eids, nb):
+        self.model = fit_ipr_sgd(
+            X, y, eids, nb,
+            k=self.k,
+            lambda_w=self.lambda_w,
+            lambda_b=self.lambda_b,
+            iters=self.iters,
+            std=self.std,
+            nn=self.nonneg,
+            verbose=self.verbose,
+            lrate=self.lrate,
+            eps=self.epsilon)
+
+    def check_if_learned(self):
+        unlearned = [attr for attr, val in self.model.items() if val is None]
+        if len(unlearned) > 0:
+            raise UnlearnedModel("IPR predict with unlearned params", unlearned)
+
+    def predict(self, X, eids, nb):
+        self.check_if_learned()
+        logging.info('making IPR predictions')
+        return ipr_predict(self.model, X.tocsc(), eids, nb)
+
+    def save(self, outfile):
+        save_np_vars(self.model, outfile)
+
+    def feature_importance(self, X, y, eids, nb, trainf, fguidef, f_indices):
+        """Calculate feature importance metrics."""
+        self.check_if_learned()
+
+        X = X.tocsr()
+        X_ = X[:, nb:]  # n x p
+
+        # Extract model params from dict. No need for w0.
+        w = self.model['w']
+        P = self.model['P']
+        W = self.model['W']
+
+        # Read in training data for use of DataFrame.
+        cols = [name for name, count in f_indices]
+        train = pd.read_csv(trainf, usecols=cols)
+        target, ents, cats, reals = read_feature_guide(fguidef)
+        nents = len(ents)  # number of entities
+
+        n, nf = X.shape  # num training examples and num features
+        p = nf - nb  # num non-entity predictor variables
+        k = self.k
+        idx_table = dict(f_indices)
+
+        # Deviation calculations will be stored here.
+        dev = {}
+
+        # Start by taking absolute values of all parameters.
+        w = abs(w)
+        P = abs(P)
+        W = abs(W)
+        X_ = abs(X_)
+
+        # Calculate deviations for the entity bias terms.
+        bi_prev = 0
+        for i, ent in enumerate(ents):
+            b_i = idx_table[ent]
+            weights = w[bi_prev: b_i]
+            bi_prev = b_i
+
+            uniq_ids = np.unique(train[ent])
+            nz_count = np.vectorize(lambda i: train[train[ent] == 1].shape[0])
+            nnz = nz_count(uniq_ids)
+            dev[ent] = (weights * nnz).sum()
+
+        # Next calculate deviation for the rest of the features.
+        membs = P[eids]  # n x k
+        fdev_pprof = X_.T.dot(membs).T * W  # dev per profile
+        fdev = fdev_pprof.sum(axis=0)  # dev across profiles
+
+        n_prev = 0
+        for f, fname in enumerate(cats + reals):
+            n_f = idx_table[fname] - nb
+            dev[fname] = fdev[n_prev: n_f].sum()
+            n_prev = n_f
+
+        # Calculate total absolute deviation over all records.
+        T = sum(dev.values())
+
+        # Now calculate importances.
+        colname = 'Importance'
+        imp = {k: dev[k] / T for k in dev}
+        I = pd.DataFrame(imp.values(), index=imp.keys(), columns=[colname])
+        I = I.sort(colname, ascending=False)
+
+        # Plot feature importance.
+        deep_blue = sns.color_palette('colorblind')[0]
+        ax1 = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+        ax1.set(title='Feature Importance for Grade Prediction',
+                ylabel='Feature',
+                xlabel='Proportion of Deviation From Intercept')
+        ax1.figure.show()
+
+        # Calculate profile contributions.
+        membs = P[eids]         # n x k
+        reg = X_.dot(W.T)       # n x k
+        contribs = membs * reg  # n x k
+        contribs /= contribs.sum(axis=1)[:, np.newaxis]
+
+        # Calculate feature importance per profile.
+        devs = [{} for _ in xrange(k)]
+        n_prev = 0
+        for f, fname in enumerate(cats + reals):
+            n_f = idx_table[fname] - nb
+            for l in xrange(k):
+                devs[l][fname] = fdev_pprof[l][n_prev: n_f].sum()
+            n_prev = n_f
+
+        # Add in entity bias deviations.
+        for l in xrange(k):
+            for ent in ents:
+                devs[l][ent] = dev[ent]
+
+        imp = [{k: _dev[k] / T for k in _dev} for _dev in devs]
+        sortby = 'Feature'
+        I_pprof = pd.DataFrame(imp)\
+                    .unstack(1)\
+                    .reset_index()\
+                    .rename(columns={'level_0': sortby,
+                                     'level_1': 'Model',
+                                     0: colname})
+        I_pprof[sortby] = I_pprof[sortby].astype('category')
+        I_pprof[sortby].cat.set_categories(I.index, inplace=True)
+        I_pprof.sort(sortby, inplace=True)
+
+        # Plot the results.
+        sns.plt.figure()
+        ax2 = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
+        ax2.set(title='Feature Importance Per Model', xlabel=colname)
+        ax2.figure.show()
+
+        return ax1, ax2
+
+
 def make_parser():
     parser = argparse.ArgumentParser(
         description="mixed-membership multi-linear regression")
@@ -294,6 +492,7 @@ if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
 
+
     # Setup logging.
     logging.basicConfig(
         level=(logging.DEBUG if args.verbose == 2 else
@@ -301,11 +500,13 @@ if __name__ == "__main__":
                logging.ERROR),
         format="[%(asctime)s]: %(message)s")
 
+
     # Sanity check bounds argument.
     bounds = args.bounds.split(',')
     if len(bounds) != 2:
         print 'bounds must be comma-separated, got %s' % args.bounds
         sys.exit(BOUNDS_FORMAT)
+
 
     logging.info('reading train/test files')
     try:
@@ -321,21 +522,25 @@ if __name__ == "__main__":
         logging.error(e.message)
         sys.exit(errno)
 
-    # Train IPR model.
-    model = fit_ipr_sgd(
-        X, y, eids, nb,
-        k=args.nmodels,
-        lambda_w=args.lambda_w,
-        lambda_b=args.lambda_b,
-        iters=args.iters,
-        std=args.init_std,
-        nn=args.nonneg,
-        verbose=args.verbose,
-        lrate=args.lrate,
-        eps=args.epsilon)
 
-    logging.info('making predictions')
-    err = test_y - ipr_predict(model, test_X.tocsc(), test_eids, nb)
+    # Init model using cmdline args.
+    model = IPR(k=args.nmodels,
+                lambda_w=args.lambda_w,
+                lambda_b=args.lambda_b,
+                iters=args.iters,
+                std=args.init_std,
+                nonneg=args.nonneg,
+                verbose=args.verbose,
+                lrate=args.lrate,
+                epsilon=args.epsilon)
+
+    # Train IPR model.
+    model.fit(X, y, eids, nb)
+
+
+    # Make predictions and evaluate in terms of RMSE.
+    predictions = model.predict(test_X, test_eids, nb)
+    err = test_y - predictions
     print 'IPR RMSE:\t%.4f' % rmse_from_err(err)
 
     baseline_pred = np.random.uniform(0, 4, len(test_y))
@@ -344,121 +549,15 @@ if __name__ == "__main__":
     gm_pred = np.repeat(y.mean(), len(test_y))
     print 'GM RMSE:\t%.4f' % rmse_from_err(gm_pred - test_y)
 
+
     # Save model params.
     if args.output:
-        save_np_vars(model, args.output)
+        model.save(args.output)
 
 
     # Calculate feature importance metrics.
-    X = X.tocsr()
-    X_ = X[:, nb:]  # n x p
+    ax1, ax2 = model.feature_importance(
+        X, y, eids, nb, args.train, args.feature_guide, f_indices)
 
-    # Extract model params from returned dict.
-    w = model['w']
-    P = model['P']
-    W = model['W']
+    raw_input()
 
-    # Read in training data for use of DataFrame.
-    cols = [name for name, count in f_indices]
-    train = pd.read_csv(args.train, usecols=cols)
-    target, ents, cats, reals = read_feature_guide(args.feature_guide)
-    nents = len(ents)  # number of entities
-
-    n, nf = X.shape  # num training examples and num features
-    p = nf - nb  # num non-entity predictor variables
-    k = args.nmodels
-    idx_table = dict(f_indices)
-
-    # Deviation calculations will be stored here.
-    dev = {}
-
-    # Start by taking absolute values of all parameters.
-    w = abs(w)
-    P = abs(P)
-    W = abs(W)
-    X_ = abs(X_)
-
-    # Calculate deviations for the entity bias terms.
-    bi_prev = 0
-    for i, ent in enumerate(ents):
-        b_i = idx_table[ent]
-        weights = w[bi_prev: b_i]
-        bi_prev = b_i
-
-        uniq_ids = np.unique(train[ent])
-        nz_count = np.vectorize(lambda i: train[train[ent] == 1].shape[0])
-        nnz = nz_count(uniq_ids)
-        dev[ent] = (weights * nnz).sum()
-
-    # Next calculate deviation for the rest of the features.
-    membs = P[eids]  # n x k
-    fdev_pprof = X_.T.dot(membs).T * W  # dev per profile
-    fdev = fdev_pprof.sum(axis=0)  # dev across profiles
-
-    n_prev = 0
-    for f, fname in enumerate(cats + reals):
-        n_f = idx_table[fname] - nb
-        dev[fname] = fdev[n_prev: n_f].sum()
-        n_prev = n_f
-
-    # Calculate total absolute deviation over all records.
-    # dev = pd.DataFrame(dev.values(), index=dev.keys(), columns=['dev'])
-    # T = dev.sum()
-    T = sum(dev.values())
-
-    # Now calculate importances.
-    colname = 'Importance'
-    imp = {k: dev[k] / T for k in dev}
-    I = pd.DataFrame(imp.values(), index=imp.keys(), columns=[colname])
-    I = I.sort(colname, ascending=False)
-
-    # Plot feature importance.
-    deep_blue = sns.color_palette('colorblind')[0]
-    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
-    ax.set(title='Feature Importance for Grade Prediction',
-           ylabel='Feature',
-           xlabel='Proportion of Deviation From Intercept')
-    ax.figure.show()
-
-    # Calculate profile contributions.
-    membs = P[eids]         # n x k
-    reg = X_.dot(W.T)       # n x k
-    contribs = membs * reg  # n x k
-    contribs /= contribs.sum(axis=1)[:, np.newaxis]
-
-    # Calculate feature importance per profile.
-    devs = [{} for _ in xrange(k)]
-    n_prev = 0
-    for f, fname in enumerate(cats + reals):
-        n_f = idx_table[fname] - nb
-        for l in xrange(k):
-            devs[l][fname] = fdev_pprof[l][n_prev: n_f].sum()
-        n_prev = n_f
-
-    # Add in entity bias deviations.
-    for l in xrange(k):
-        for ent in ents:
-            devs[l][ent] = dev[ent]
-
-    imp = [{k: _dev[k] / T for k in _dev} for _dev in devs]
-    sortby = 'Feature'
-    I_pprof = pd.DataFrame(imp)\
-                .unstack(1)\
-                .reset_index()\
-                .rename(columns={'level_0': sortby,
-                                 'level_1': 'Model',
-                                 0: colname})
-    I_pprof[sortby] = I_pprof[sortby].astype('category')
-    I_pprof[sortby].cat.set_categories(I.index, inplace=True)
-    I_pprof.sort(sortby, inplace=True)
-
-    # Plot the results.
-    sns.plt.figure()
-    ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
-    ax.set(title='Feature Importance Per Model', xlabel=colname)
-    ax.figure.show()
-
-    # g = sns.FacetGrid(data=I_pprof, col='Model')
-    # ax = g.map(sns.barplot, 'Importance', 'Feature')
-    # g.set(title='Feature Importance Per Model')
-    # g.fig.show()
