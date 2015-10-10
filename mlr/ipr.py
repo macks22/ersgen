@@ -270,7 +270,61 @@ def preprocess(train, test, target, ents, cats, reals):
             indices, nents)
 
 
-class IPR(object):
+class Model(object):
+    """General model class with load/save/preprocess functionality."""
+
+    def set_fguide(self, fguidef=''):
+        if fguidef:
+            self.read_fguide(fguidef)
+        else:
+            self.reset_fguide()
+
+    def read_fguide(self, fguidef):
+        self.target, self.ents, self.cats, self.reals = \
+            read_feature_guide(fguidef)
+
+    def reset_fguide(self):
+        self.target = ''
+        for name in ['ents', 'cats', 'reals']:
+            setattr(self, name, [])
+
+    @property
+    def fgroups(self):
+        return ('ents', 'cats', 'reals')
+
+    @property
+    def nf(self):
+        return sum(len(group) for group in self.fgroups)
+
+    def check_fguide(self):
+        if self.nf <= 0:
+            raise ValueError("preprocessing requires feature guide")
+
+    def read_necessary_fguide(self, fguide=''):
+        if fguide:
+            self.read_fguide(fguide)
+        else:
+            check_fguide()
+
+    def preprocess(self, train, test, fguidef=''):
+        self.read_necessary_fguide(fguide)
+        return preprocess(
+            train, test, self.target, self.ents, self.cats, self.reals)
+
+    def check_if_learned(self):
+        unlearned = [attr for attr, val in self.model.items() if val is None]
+        if len(unlearned) > 0 or len(self.model) == 0:
+            raise UnlearnedModel("IPR predict with unlearned params", unlearned)
+
+    def save(self, savedir, ow=False):
+        save_model_vars(self.model, savedir, ow)
+
+    def load(self, savedir):
+        self.model = load_model_vars(savedir)
+
+
+
+class IPR(Model):
     """Individualized Profile Regression model."""
 
     def __init__(self, k, lambda_w=0.01, lambda_b=0.0, iters=10, lrate=0.001,
@@ -317,27 +371,6 @@ class IPR(object):
     def W(self):
         return self.model['W']
 
-    def set_fguide(self, fguidef=''):
-        if fguidef:
-            self.read_fguide(fguidef)
-        else:
-            self.reset_fguide()
-
-    def read_fguide(self, fguidef):
-        self.target, self.ents, self.cats, self.reals = \
-            read_feature_guide(fguidef)
-
-    def reset_fguide(self):
-        for name in ['target', 'ents', 'cats', 'reals']:
-            setattr(self, name, [])
-
-    def preprocess(self, train, test, fguidef=''):
-        if fguidef:
-            self.read_fguide(fguidef)
-
-        return preprocess(
-            train, test, self.target, self.ents, self.cats, self.reals)
-
     def fit(self, X, y, eids, nb):
         self.model = fit_ipr_sgd(
             X, y, eids, nb,
@@ -351,25 +384,15 @@ class IPR(object):
             lrate=self.lrate,
             eps=self.epsilon)
 
-    def check_if_learned(self):
-        unlearned = [attr for attr, val in self.model.items() if val is None]
-        if len(unlearned) > 0:
-            raise UnlearnedModel("IPR predict with unlearned params", unlearned)
-
     def predict(self, X, eids, nb):
         self.check_if_learned()
         logging.info('making IPR predictions')
         return ipr_predict(self.model, X.tocsc(), eids, nb)
 
-    def save(self, savedir, ow=False):
-        save_model_vars(self.model, savedir, ow)
-
-    def load(self, savedir):
-        self.model = load_model_vars(savedir)
-
-    def feature_importance(self, X, y, eids, nb, trainf, fguidef, f_indices):
+    def feature_importance(self, X, y, eids, nb, train, f_indices, fguidef=''):
         """Calculate feature importance metrics."""
         self.check_if_learned()
+        self.read_necessary_fguide(fguidef)
 
         X = X.tocsr()
         X_ = X[:, nb:]  # n x p
@@ -380,10 +403,7 @@ class IPR(object):
         W = self.model['W']
 
         # Read in training data for use of DataFrame.
-        cols = [name for name, count in f_indices]
-        train = pd.read_csv(trainf, usecols=cols)
-        target, ents, cats, reals = read_feature_guide(fguidef)
-        nents = len(ents)  # number of entities
+        nents = len(self.ents)  # number of entities
 
         n, nf = X.shape  # num training examples and num features
         p = nf - nb  # num non-entity predictor variables
@@ -401,7 +421,7 @@ class IPR(object):
 
         # Calculate deviations for the entity bias terms.
         bi_prev = 0
-        for i, ent in enumerate(ents):
+        for i, ent in enumerate(self.ents):
             b_i = idx_table[ent]
             weights = w[bi_prev: b_i]
             bi_prev = b_i
@@ -417,7 +437,7 @@ class IPR(object):
         fdev = fdev_pprof.sum(axis=0)  # dev across profiles
 
         n_prev = 0
-        for f, fname in enumerate(cats + reals):
+        for f, fname in enumerate(self.cats + self.reals):
             n_f = idx_table[fname] - nb
             dev[fname] = fdev[n_prev: n_f].sum()
             n_prev = n_f
@@ -431,14 +451,6 @@ class IPR(object):
         I = pd.DataFrame(imp.values(), index=imp.keys(), columns=[colname])
         I = I.sort(colname, ascending=False)
 
-        # Plot feature importance.
-        deep_blue = sns.color_palette('colorblind')[0]
-        ax1 = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
-        ax1.set(title='Feature Importance for Grade Prediction',
-                ylabel='Feature',
-                xlabel='Proportion of Deviation From Intercept')
-        ax1.figure.show()
-
         # Calculate profile contributions.
         membs = P[eids]         # n x k
         reg = X_.dot(W.T)       # n x k
@@ -448,7 +460,7 @@ class IPR(object):
         # Calculate feature importance per profile.
         devs = [{} for _ in xrange(k)]
         n_prev = 0
-        for f, fname in enumerate(cats + reals):
+        for f, fname in enumerate(self.cats + self.reals):
             n_f = idx_table[fname] - nb
             for l in xrange(k):
                 devs[l][fname] = fdev_pprof[l][n_prev: n_f].sum()
@@ -456,7 +468,7 @@ class IPR(object):
 
         # Add in entity bias deviations.
         for l in xrange(k):
-            for ent in ents:
+            for ent in self.ents:
                 devs[l][ent] = dev[ent]
 
         imp = [{k: _dev[k] / T for k in _dev} for _dev in devs]
@@ -471,13 +483,25 @@ class IPR(object):
         I_pprof[sortby].cat.set_categories(I.index, inplace=True)
         I_pprof.sort(sortby, inplace=True)
 
-        # Plot the results.
-        sns.plt.figure()
-        ax2 = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
-        ax2.set(title='Feature Importance Per Model', xlabel=colname)
-        ax2.figure.show()
+        return I, I_pprof
 
-        return ax1, ax2
+    def plot_imp(self, I, colname="Importance"):
+        """Plot overall feature importance."""
+        deep_blue = sns.color_palette('colorblind')[0]
+        ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+        ax.set(title='Feature Importance for Grade Prediction',
+               ylabel='Feature',
+               xlabel='Proportion of Deviation From Intercept')
+        ax.figure.show()
+        return ax
+
+    def plot_pprof_imp(self, I_pprof, colname="Importance", sortby="Feature"):
+        """Plot per-profile feature importance."""
+        sns.plt.figure()
+        ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
+        ax.set(title='Feature Importance Per Model', xlabel=colname)
+        ax.figure.show()
+        return ax
 
 
 def make_parser():
@@ -569,6 +593,7 @@ if __name__ == "__main__":
     try:
         data_and_names = \
             read_train_test(args.train, args.test, args.feature_guide)
+        train = data_and_names[0]
         eids, X, y, test_eids, test_X, test_y, f_indices, nb = \
             preprocess(*data_and_names)
         errno = None
@@ -611,12 +636,18 @@ if __name__ == "__main__":
 
     # Save model params.
     if args.output:
-        model.save(args.output)
+        try:
+            model.save(args.output)
+        except OSError as err:
+            logging.error("model save failed: %s" % str(err))
 
 
     # Calculate feature importance metrics.
-    ax1, ax2 = model.feature_importance(
-        X, y, eids, nb, args.train, args.feature_guide, f_indices)
+    I, I_pprof = model.feature_importance(
+        X, y, eids, nb, train, f_indices, args.feature_guide)
+
+    ax1 = model.plot_imp(I)
+    ax2 = model.plot_pprof_imp(I_pprof)
 
     raw_input()
 
