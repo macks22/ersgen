@@ -135,6 +135,42 @@ def map_ids(data, key):
     return n
 
 
+def save_model_vars(vars, savedir, ow=False):
+    """Saves numpy vars using save_np_vars and saves normal vars as (type,data)
+    pairs. This relies on a particular directory format. All params are saved as
+    .txt files in the savedir. The shape information of numpy vars is saved in a
+    file called shapes.json. The names not in this file can be assumed to be
+    non-numpy vars when reading the params back in.
+    """
+    np_vars = {name: val for name, val in vars.items() if hasattr(val, 'shape')}
+    save_np_vars(np_vars, savedir, ow)
+
+    others = {name: val for name, val in vars.items() if not name in np_vars}
+    for name, data in others.items():
+        var_file = os.path.join(savedir, name + '.txt')
+        with open(var_file, 'w') as f:
+            f.write('%s,%s' % (type(data).__name__, data))
+
+
+def load_model_vars(savedir):
+    """Mirror function to save_model_vars."""
+    vars = load_np_vars(savedir)
+    fnames = [fname for fname in os.listdir(savedir) if fname.endswith('.txt')]
+    names =  [os.path.splitext(fname)[0] for fname in fnames]
+    unread = [(names[i], fnames[i]) for i in range(len(names))
+              if not names[i] in vars]
+
+    for name, fname in unread:
+        var_file = os.path.join(savedir, fname)
+        with open(var_file) as f:
+            dtype_str, data = f.read().strip().split(',')
+            dtype = eval(dtype_str)
+            vars[name] = dtype(data)
+            logging.info('loaded var %s of type %s' % (name, dtype_str))
+
+    return vars
+
+
 def save_np_vars(vars, savedir, ow=False):
     """Save a dictionary of numpy variables to `savedir`. We assume
     the directory does not exist; an OSError will be raised if it does.
@@ -150,8 +186,7 @@ def save_np_vars(vars, savedir, ow=False):
 
     os.mkdir(savedir)
     shapes = {}
-    for varname in vars:
-        data = vars[varname]
+    for varname, data in vars.items():
         var_file = os.path.join(savedir, varname + '.txt')
         np.savetxt(var_file, data.reshape(-1, data.size))
         shapes[varname] = data.shape
@@ -172,6 +207,7 @@ def load_np_vars(savedir):
     for varname, shape in shapes.items():
         var_file = os.path.join(savedir, varname + '.txt')
         vars[varname] = np.loadtxt(var_file).reshape(shape)
+        logging.info('loaded np var %s with shape %s' % (varname, str(shape)))
 
     return vars
 

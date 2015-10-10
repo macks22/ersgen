@@ -9,7 +9,7 @@ import scipy as sp
 import seaborn as sns
 from sklearn import preprocessing
 
-from util import save_np_vars
+from util import save_model_vars, load_model_vars
 from cipr import (
     fit_ipr_sgd, compute_errors, compute_rmse, ipr_predict, rmse_from_err)
 
@@ -126,7 +126,7 @@ def map_ids(data, key, id_map=None):
     return id_map
 
 
-def read_data(train_file, test_file, conf_file):
+def read_train_test(train_file, test_file, conf_file):
     """Read the train and test data according to the feature guide in the
     configuration file. Return the train and test data as (X, y) pairs for the
     train and test data.
@@ -171,9 +171,39 @@ def read_data(train_file, test_file, conf_file):
     test = read_file('test', test_file)
     nd_train = train.shape[0]
     nd_test = test.shape[0]
-    logging.info('number of instances: train=%d, test=%d' % (nd_train, nd_test))
+    logging.info('number of instances: train=%d, test=%d' % (
+        train.shape[0], test.shape[0]))
+
+    return train, test, target, ents, cats, reals
+
+
+def preprocess(train, test, target, ents, cats, reals):
+    """Return preprocessed (X, y, eid) pairs for the train and test sets.
+
+    Preprocessing includes:
+
+    1.  Map primary entity ID (first in ents) to a 0-contiguous range.
+    2.  Z-score scale the real-valued features.
+    3.  One-hot encode the categorical features (including primary entity ID).
+
+    This function tries to be as general as possible to accomodate learning by
+    many models. As such, there are 8 return values. The first three are:
+
+    1.  train_eids: primary entity IDs as a numpy array
+    2.  train_X: training X values (first categorical, then real-valued)
+    3.  train_y: training y values (unchanged from input)
+
+    The next three values are the same except for the test set. The final two
+    values are:
+
+    7.  indices: The indices of each feature in the encoded X matrix.
+    8.  nents: The number of categorical features after one-hot encoding.
+
+    """
 
     # Separate X, y for train/test data.
+    nd_train = train.shape[0]
+    nd_test = test.shape[0]
     train_y = train[target].values
     test_y = test[target].values
 
@@ -243,8 +273,8 @@ def read_data(train_file, test_file, conf_file):
 class IPR(object):
     """Individualized Profile Regression model."""
 
-    def __init__(self, k, lambda_w, lambda_b, iters, lrate, epsilon, std,
-                 nonneg, verbose):
+    def __init__(self, k, lambda_w=0.01, lambda_b=0.0, iters=10, lrate=0.001,
+                 epsilon=0.00001, std=0.01, nonneg=0, verbose=0, fguidef=''):
         """Initialize the model. This sets all parameters that govern learning.
         If the files are passed in, they are read and the data is cached in the
         initialized object.
@@ -260,6 +290,9 @@ class IPR(object):
         self.std = std
         self.nonneg = nonneg
         self.verbose = verbose
+
+        # Set up feature guide
+        self.set_fguide(fguidef)
 
         # all model params initially set to None
         self.model = {attr: None for attr in self.param_names}
@@ -284,6 +317,27 @@ class IPR(object):
     def W(self):
         return self.model['W']
 
+    def set_fguide(self, fguidef=''):
+        if fguidef:
+            self.read_fguide(fguidef)
+        else:
+            self.reset_fguide()
+
+    def read_fguide(self, fguidef):
+        self.target, self.ents, self.cats, self.reals = \
+            read_feature_guide(fguidef)
+
+    def reset_fguide(self):
+        for name in ['target', 'ents', 'cats', 'reals']:
+            setattr(self, name, [])
+
+    def preprocess(self, train, test, fguidef=''):
+        if fguidef:
+            self.read_fguide(fguidef)
+
+        return preprocess(
+            train, test, self.target, self.ents, self.cats, self.reals)
+
     def fit(self, X, y, eids, nb):
         self.model = fit_ipr_sgd(
             X, y, eids, nb,
@@ -307,8 +361,11 @@ class IPR(object):
         logging.info('making IPR predictions')
         return ipr_predict(self.model, X.tocsc(), eids, nb)
 
-    def save(self, outfile):
-        save_np_vars(self.model, outfile)
+    def save(self, savedir, ow=False):
+        save_model_vars(self.model, savedir, ow)
+
+    def load(self, savedir):
+        self.model = load_model_vars(savedir)
 
     def feature_importance(self, X, y, eids, nb, trainf, fguidef, f_indices):
         """Calculate feature importance metrics."""
@@ -510,8 +567,10 @@ if __name__ == "__main__":
 
     logging.info('reading train/test files')
     try:
+        data_and_names = \
+            read_train_test(args.train, args.test, args.feature_guide)
         eids, X, y, test_eids, test_X, test_y, f_indices, nb = \
-            read_data(args.train, args.test, args.feature_guide)
+            preprocess(*data_and_names)
         errno = None
     except IOError as e:
         errno = BAD_FILENAME
