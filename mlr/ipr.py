@@ -121,8 +121,8 @@ def map_ids(data, key, id_map=None):
         ids = data[key].unique()
         n = len(ids)
         id_map = dict(zip(ids, range(n)))
-    else:
-        data[key] = data[key].apply(lambda _id: id_map[_id])
+
+    data[key] = data[key].apply(lambda _id: id_map[_id])
     return id_map
 
 
@@ -307,7 +307,7 @@ class Model(object):
             check_fguide()
 
     def preprocess(self, train, test, fguidef=''):
-        self.read_necessary_fguide(fguide)
+        self.read_necessary_fguide(fguidef)
         return preprocess(
             train, test, self.target, self.ents, self.cats, self.reals)
 
@@ -327,21 +327,22 @@ class Model(object):
 class IPR(Model):
     """Individualized Profile Regression model."""
 
-    def __init__(self, k, lambda_w=0.01, lambda_b=0.0, iters=10, lrate=0.001,
-                 epsilon=0.00001, std=0.01, nonneg=0, verbose=0, fguidef=''):
+    def __init__(self, nmodels, lambda_w=0.01, lambda_b=0.0, iters=10,
+                 lrate=0.001, epsilon=0.00001, init_std=0.01, nonneg=0,
+                 verbose=0, fguidef='', *args, **kwargs):
         """Initialize the model. This sets all parameters that govern learning.
         If the files are passed in, they are read and the data is cached in the
         initialized object.
 
         See the make_parser method for detail on parameters.
         """
-        self.k = k
+        self.nmodels = nmodels
         self.lambda_w = lambda_w
         self.lambda_b = lambda_b
         self.iters = iters
         self.lrate = lrate
         self.epsilon = epsilon
-        self.std = std
+        self.init_std = init_std
         self.nonneg = nonneg
         self.verbose = verbose
 
@@ -350,6 +351,20 @@ class IPR(Model):
 
         # all model params initially set to None
         self.model = {attr: None for attr in self.param_names}
+
+    @property
+    def args_suffix(self):
+        parts = [
+            'k%d' % self.k,
+            'lw%.4f' % self.lambda_w,
+            'lb%.4f' % self.lambda_b,
+            'i%d' % self.iters,
+            'lr%.4f' % self.lrate,
+            's%.4f' % self.init_std]
+        if self.nonneg:
+            parts.append('nn')
+
+        return '-'.join(parts)
 
     @property
     def param_names(self):
@@ -374,11 +389,11 @@ class IPR(Model):
     def fit(self, X, y, eids, nb):
         self.model = fit_ipr_sgd(
             X, y, eids, nb,
-            k=self.k,
+            k=self.nmodels,
             lambda_w=self.lambda_w,
             lambda_b=self.lambda_b,
             iters=self.iters,
-            std=self.std,
+            std=self.init_std,
             nn=self.nonneg,
             verbose=self.verbose,
             lrate=self.lrate,
@@ -407,7 +422,7 @@ class IPR(Model):
 
         n, nf = X.shape  # num training examples and num features
         p = nf - nb  # num non-entity predictor variables
-        k = self.k
+        k = self.nmodels
         idx_table = dict(f_indices)
 
         # Deviation calculations will be stored here.
@@ -485,23 +500,24 @@ class IPR(Model):
 
         return I, I_pprof
 
-    def plot_imp(self, I, colname="Importance"):
-        """Plot overall feature importance."""
-        deep_blue = sns.color_palette('colorblind')[0]
-        ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
-        ax.set(title='Feature Importance for Grade Prediction',
-               ylabel='Feature',
-               xlabel='Proportion of Deviation From Intercept')
-        ax.figure.show()
-        return ax
+def plot_imp(I, colname="Importance"):
+    """Plot overall feature importance."""
+    sns.plt.figure()
+    deep_blue = sns.color_palette('colorblind')[0]
+    ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
+    ax.set(title='Feature Importance for Grade Prediction',
+           ylabel='Feature',
+           xlabel='Proportion of Deviation From Intercept')
+    ax.figure.show()
+    return ax
 
-    def plot_pprof_imp(self, I_pprof, colname="Importance", sortby="Feature"):
-        """Plot per-profile feature importance."""
-        sns.plt.figure()
-        ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
-        ax.set(title='Feature Importance Per Model', xlabel=colname)
-        ax.figure.show()
-        return ax
+def plot_pprof_imp(I_pprof, colname="Importance", sortby="Feature"):
+    """Plot per-profile feature importance."""
+    sns.plt.figure()
+    ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
+    ax.set(title='Feature Importance Per Model', xlabel=colname)
+    ax.figure.show()
+    return ax
 
 
 def make_parser():
@@ -608,11 +624,11 @@ if __name__ == "__main__":
 
 
     # Init model using cmdline args.
-    model = IPR(k=args.nmodels,
+    model = IPR(nmodels=args.nmodels,
                 lambda_w=args.lambda_w,
                 lambda_b=args.lambda_b,
                 iters=args.iters,
-                std=args.init_std,
+                init_std=args.init_std,
                 nonneg=args.nonneg,
                 verbose=args.verbose,
                 lrate=args.lrate,
@@ -646,8 +662,7 @@ if __name__ == "__main__":
     I, I_pprof = model.feature_importance(
         X, y, eids, nb, train, f_indices, args.feature_guide)
 
-    ax1 = model.plot_imp(I)
-    ax2 = model.plot_pprof_imp(I_pprof)
+    ax1 = plot_imp(I)
+    ax2 = plot_pprof_imp(I_pprof)
 
     raw_input()
-
