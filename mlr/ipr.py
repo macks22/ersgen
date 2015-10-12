@@ -329,7 +329,7 @@ class IPR(Model):
 
     def __init__(self, nmodels, lambda_w=0.01, lambda_b=0.0, iters=10,
                  lrate=0.001, epsilon=0.00001, init_std=0.01, nonneg=0,
-                 verbose=0, fguidef='', *args, **kwargs):
+                 verbose=0, fguidef=''):
         """Initialize the model. This sets all parameters that govern learning.
         If the files are passed in, they are read and the data is cached in the
         initialized object.
@@ -355,7 +355,7 @@ class IPR(Model):
     @property
     def args_suffix(self):
         parts = [
-            'k%d' % self.k,
+            'k%d' % self.nmodels,
             'lw%.4f' % self.lambda_w,
             'lb%.4f' % self.lambda_b,
             'i%d' % self.iters,
