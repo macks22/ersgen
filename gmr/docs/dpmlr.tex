@@ -69,7 +69,7 @@
 
 % *** FLOAT PACKAGES ***
 %
-\usepackage{fixltx2e}
+%\usepackage{fixltx2e}
 \usepackage{stfloats}
 
 
@@ -80,9 +80,9 @@
 
 % BEGIN PAPER CONTENT
 %
-\title{Nonparametric Biased Mixtures of Linear Regressions}
+\title{Infinite Profiling Mixtures of Linear Regressions}
 \author{
-    Mack Sweeney, Carlotta Domeniconi, Kathryn Laskey, Huzefa Rangwala\\
+    Mack Sweeney, Kathryn Laskey, Huzefa Rangwala\\
         George Mason University
 }
 \date{\today}
@@ -97,11 +97,16 @@
 \newcommand{\asteq}{\mathrel{*}=}
 \newcommand{\elips}[1]{\ldots#1\allowbreak}
 \newcommand{\bc}{,\allowbreak}
+\newcommand*\diff{\mathop{}\!\mathrm{d}}
 
-\AtBeginEnvironment{align}{\par\footnotesize}
+\AtBeginEnvironment{align}{\par\small}
 \AfterEndEnvironment{align}{\normalsize}
-\AtBeginEnvironment{align*}{\par\footnotesize}
+\AtBeginEnvironment{align*}{\par\small}
 \AfterEndEnvironment{align*}{\normalsize}
+\AtBeginEnvironment{flalign}{\par\small}
+\AfterEndEnvironment{flalign}{\normalsize}
+\AtBeginEnvironment{algorithmic}{\par\small}
+\AfterEndEnvironment{algorithmic}{\normalsize}
 
 \newtheorem{lemma}{Lemma}
 \newtheorem{proof}{Proof}
@@ -129,16 +134,16 @@ courses each semester. Taking one particularly difficult course may be an
 exciting challenge, while taking two or three concurrently would be
 overwhelming. So there is a need to properly blend courses of varying difficulty
 in a single semester. Certain course combinations may also be very
-complementary. Many courses are associated with labs, which provide practical
-experience with the theoretical lecture concepts.
+complementary. For instance, many courses are associated with labs, which
+provide practical experience with the theoretical lecture concepts.
 
-This task is also complicated by the sequential nature of learning. Many courses
-build upon knowledge learned in previous courses. Some courses can only be taken
-if the student has already taken the prerequisite courses. Other courses do not
-have these requirements but should still not be taken unless certain
-prerequisite knowledge has been learned. If no prerequisites are given, students
-must determine for themselves which prior courses should have been taken in
-order to do well in a course currently being selected.
+The selection task is also complicated by the sequential nature of learning.
+Many courses build upon knowledge learned in previous courses. Some courses can
+only be taken if the student has already taken the prerequisite courses. Other
+courses do not have these requirements but should still not be taken unless
+certain prerequisite knowledge has been learned. If no prerequisites are given,
+students must determine for themselves which prior courses should have been
+taken in order to do well in a course currently being selected.
 
 Beyond the questions of difficulty and requirements, students would also like to
 explore their individual interests as much as possible. With all else being
@@ -148,10 +153,10 @@ more difficult but meets the same requirement as an easier course. This
 subjective factor makes it impossible for a one-size-fits-all course selection
 to be successful.
 
-We seek to address one particular aspect of the degree planning problem.
-We seek to assist students in ranking courses for a particular semester given
-all prior course data for all students in the university. In this study, we rank
-these courses based on student-relative difficulty
+We seek to address one particular aspect of the degree planning problem
+described above. We seek to assist students in ranking courses for a particular
+semester given all prior course data for all students in the university. In this
+study, we rank these courses based on student-relative difficulty
 
 \section{Problem Formulation}\label{problem-formulation}
 
@@ -197,11 +202,70 @@ and including term $t$. We define this recursively:
 where $join$ is an inner-join on the (cid, sid, term) fields. Conflicts are
 resolved by keeping the values from the more recent term. We define
 $\bm{X}^{(t)}$ to be the cumulative feature vector matrix, recursively
-accumulated in the same manner.
+accumulated in the same manner. Throughout the paper, we assume we are
+currently in term $t$ and have been given data for terms up to $t-1$. We leave
+off the term superscript, so $Y$ represents $Y^{(t-1)}$ and $\bm{X}$ represents
+$\bm{X}^{(t-1)}$. Finally, we define $\bm{D} = (\bm{X}, Y)$ to be the observed
+data.
 
-Given the cumulative grade matrix $Y^{(t-1)}$ and feature vector
-matrix $\bm{X}^{(t-1)}$, our task is to predict the unobserved grades in term
-$t$.
+Given the cumulative grades $Y$ and feature vectors $\bm{X}$, our task is to
+predict the unobserved grades in term $t$.
+
+\section{Notation}
+
+\subsection{Data}
+
+{\footnotesize
+\begin{tabular}{p{0.35\columnwidth} p{0.6\columnwidth}}
+    $N$         &   Number of students.     \\
+    $M$         &   Number of courses.      \\
+    $T$         &   Number of semesters.    \\
+    $f$         &   Number of features.     \\
+    $\bm{X} \in \mathbb{R}^{N \times M \times T \times f}$
+                &   Tensor of observed feature vectors. \\
+    $\bm{Y} \in \mathbb{R}^{N \times M \times T}$
+                &   Tensor of observed ordinal grades.  \\
+    $\bm{D}_{nm} = (\bm{X}_{nm}, \bm{Y}_{nm})$
+                &   All observed data for student $n$, course $m$.  \\
+\end{tabular}}
+
+\subsection{Model Parameters}
+
+{\footnotesize
+\begin{tabular}{p{0.3\columnwidth} p{0.6\columnwidth}}
+    $K$                         &   Number of components in finite mixture model. \\
+    $Z_{n} = \{1, ..., K\}$     &   Discrete latent state indicating which
+                                    component $\bm{D}_{nm}$ belongs to.           \\
+    $\bm{\pi}_k = P(Z_n = k)$   &   Prior probability $\bm{D}_{nm}$ is assigned
+                                    to mixture component $k$.                     \\
+    $\bm{w_k}$          &   Regression coefficients (and mean vector)
+                            for component $k$.                                    \\
+    $\sigma_k^2$        &   Regression variance for component $k$.                \\
+    $G_{nm}$            &   Latent real-valued grade of student $n$ in course $m$.\\
+    $\bm{s}_n$          &   bias term for student $n$.                            \\
+    $\bm{c}_m$          &   bias term for course $m$.                             \\
+\end{tabular}}
+
+\subsection{Hyper-parameters}
+
+{\footnotesize
+\begin{tabular}{p{0.35\columnwidth} p{0.6\columnwidth}}
+    $\alpha$                    &   Dirichlet concentration parameter           \\
+    $\Theta= (\bm{w}_0, \kappa_0, \alpha_0, \beta_0)$
+                    &   Parameters for the Guassian-Inverse-Gamma
+                        ($\mathcal{N}\Gamma^{-1}$) prior on mean vector $\bm{w}_k$ and
+                        variance $\sigma_k^2$ of a multivariate Gaussian distribution.
+                        Interpretations for each are given below.               \\
+    $\bm{w}_0$      &   Prior mean of $\bm{w}_k$                                \\
+    $\kappa_0$      &   How strongly we believe the $\bm{w}_0$ prior            \\
+    $\alpha_0$      &   Shape parameter for $\Gamma^{-1}$ prior on $\sigma_k^2$ \\
+    $\beta_0$       &   Rate parameter for $\Gamma^{-1}$ prior on $\sigma_k^2$  \\
+    $\Theta_s = (\mu_s, \sigma_s^2)$
+                    &   Mean and variance for the Guassian prior on $s_n$       \\
+    $\Theta_c = (\mu_c, \sigma_c^2)$
+                    &   Mean and variance for the Gaussian prior on $c_m$       \\
+\end{tabular}}
+
 
 \section{Modeling}\label{model}
 
@@ -209,13 +273,266 @@ We build a model that (1) accurately predicts next-term grades given data from
 previous terms, (2) clusters students to identify common learner profiles, and
 (3) is highly interpretable. We derive a fully Bayesian probabilistic model that
 combines mixtures of linear regressions with nonparametric model selection.
-Throughout this section, we assume we are currently in term $t$ and have been
-given data for terms up to $t-1$. We leave off the term superscript, so $Y$
-represents $Y^{(t-1)}$ and $\bm{X}$ represents $X^{(t-1)}$.
 
-We model the actual real-valued 0-100 grades as latent variables $G_{nm}$. The
-observed grades $Y_{nm}$ are obtained by thresholding $G_{nm}$ using fixed
-cutoffs $\bm{\gamma}$:
+We start with the familiar Finite Gaussian Mixture Model (GMM) with $K$
+components. Then we slowly mutate the model to introduce additional data
+relevant to the next-term grade prediction problem. Finally we arrive at the
+Personalized Mixture of Linear Regressions for Ordinal data (PMLRO).
+
+We define $\mathbb{C} = (1, ..., m)$ to be the set of all course IDs. We also
+define a function random-subset($\mathbb{C}$) that takes a set and returns a
+small random subset of it. $\mathcal{N}_f$ is the f-dimensional multivariate
+Gaussian and $\mathcal{W}^{-1}$ is the inverse-Wishart distribution.
+Algorithm~\ref{alg:gmm-genp} lays out the generative process for the feature
+vectors $\bm{X}$.
+%
+\begin{algorithm}
+    \caption{GMM Generative Process for $\bm{X}_{nm}$}
+    \label{alg:gmm-genp}
+    \begin{algorithmic}[1]
+        \item  Draw $\bm{\pi} \sim \text{Dir}(\alpha)$.
+        \For{$k$ in $1..K$}
+            \State  Draw $\Sigma_k \sim \mathcal{W}^{-1}(\nu_0, \Sigma_0)$.
+            \State  Draw $\bm{\mu}_k \sim
+                \mathcal{N}_f(\bm{\mu_0}, \frac{1}{\kappa_0}\Sigma_k)$.
+        \EndFor
+        \For{$n$ in $1..N$}
+            \State  Draw $Z_n \sim \text{Mult}(\bm{\pi}_1, ..., \bm{\pi}_k)$.
+            \For{$m$ in random-subset($\mathbb{C}$)}
+                \State  Draw $\bm{X}_{nm} | Z_n \sim \mathcal{N}_f(\bm{\mu}_k, \Sigma_k)$.
+            \EndFor
+        \EndFor
+    \end{algorithmic}
+\end{algorithm}
+%
+This is the standard conjugate GMM, which corresponds to the graphical model
+shown in Figure~\ref{fig:gmm-pgm}.
+
+% GMM PGM
+\begin{figure}[tbh]
+  \setlength{\belowcaptionskip}{15pt plus 3pt minus 2pt}
+  \centering
+  \caption{Finite Gaussian Mixture Model. The hyper-parameters
+           $\Theta = (\mu_0, \kappa_0, \nu_0, \Sigma_0)$. }
+  \label{fig:gmm-pgm}
+  \scalebox{0.9}{
+  \begin{tikzpicture}
+
+    % Define nodes
+    \node[obs]                                (X) {$\bm{X}_{nm}$};
+    \node[latent, left=of X]                  (Z) {$Z_n$};
+    \node[latent, above=of Z]                (pi) {$\bm{\pi}_k$};
+    \node[latent, above=of pi]            (alpha) {$\alpha$};
+    \node[latent, right=of alpha, xshift=0.1cm]  (theta) {$\Theta$};
+
+    \node[latent, below=of theta, xshift=-0.6cm] (mk) {$\bm{\mu}_k$};
+    \node[latent, below=of theta, xshift=0.6cm]  (sk) {$\Sigma_k$};
+
+    % Connect the nodes
+    \edge {Z} {X};
+    \edge {pi} {Z};
+    \edge {alpha} {pi};
+    \edge {theta} {mk,sk};
+    \edge {mk,sk} {X};
+
+    % Plates
+    \plate {course} {(X)} {$M$};
+    \plate {student}%
+           {(Z)(X)(course.south east)(course.north east)(course.north west)}%
+           {$N$};
+    \plate {comps} {(pi)(mk)(sk)} {$K$};
+
+  \end{tikzpicture}}
+\end{figure}
+
+This model clusters the students based on the features from each of the courses
+taken. However, it is not able to predict grades, since the grades are not
+included in the model. We next extend the model to a mixture of Gaussian linear
+regressions with coefficients $W \in \mathbb{R}^{K \times f}$ and
+variances $\bm{\sigma}_k^2$. We say that each grade is produced by linear
+regression $k$ with probability $\bm{\pi}_k$.
+%
+\begin{align}
+    G_n =
+    \begin{cases}
+        \bm{X}_n W_1 + \epsilon_1  &  \text{with probability } \bm{\pi}_1  \\
+        \bm{X}_n W_2 + \epsilon_2  &  \text{with probability } \bm{\pi}_2  \\
+        ...                        &                                       \\
+        \bm{X}_n W_k + \epsilon_k  &  \text{with probability } \bm{\pi}_k
+    \end{cases}
+\end{align}
+%
+The error term $\epsilon_k$ is assumed to be 0-centered Gaussian noise:
+$\epsilon_k \sim \mathcal{N}(0, \bm{\sigma}_k^2)$. This model yields the following
+mixture of multivariate normals:
+%
+\begin{align}
+    G_n &\sim
+        \sum_{k=1}^K \bm{\pi}_k
+            \mathcal{N}(\bm{X}_n W_k, I \bm{\sigma}_k^2)  \\
+    G_n | Z_n &\sim
+        \mathcal{N}(\bm{X}_n W_k, I \bm{\sigma}_k^2)
+\end{align}
+%
+We place a conjugate Gaussian-Inverse-Gamma (GIG) prior on $W_k,
+\bm{\sigma}_k^2$ (WE CAN ALSO CONSIDER IMPROPER PRIORS WHICH LEAD TO THE
+CLASSICAL LEAST SQUARES ESTIMATES):
+%
+\begin{align}
+    \bm{\sigma}_k^2 &\sim \text{IG}(\alpha_0, \beta_0),  \\
+    W_k | \bm{\sigma}_k^2 &\sim
+        \mathcal{N}(\mu_0, V_0 \bm{\sigma}_k^2),
+\end{align}
+%
+This gives us the model shown in Figure~\ref{fig:mglr-pgm}. We call this model
+the Mixture of Gaussian Linear Regressions (MGLR).
+Algorithm~\ref{alg:mglr-genp} summarizes the grade generation process under
+MGLR.
+%
+\begin{algorithm}
+    \caption{MGLR Generative Process for $G_n$}
+    \label{alg:mglr-genp}
+    \begin{algorithmic}[1]
+        \item  Draw $\bm{\pi} \sim \text{Dir}(\alpha)$.
+        \For{$k$ in $1..K$}
+            \State  Draw $\bm{\sigma}_k^2 \sim \text{IG}(\alpha_0, \beta_0)$.
+            \State  Draw $W_k \sim
+                \mathcal{N}_f(\bm{\mu_0}, V_0 \bm{\sigma}_k^2)$.
+        \EndFor
+        \For{$n$ in $1..N$}
+            \State  Draw $Z_n \sim \text{Mult}(\bm{\pi}_1, ..., \bm{\pi}_k)$.
+            \For{$m$ in random-subset($\mathbb{C}$)}
+                \State  Draw $G_{nm} | Z_n, \bm{X}_{nm} \sim
+                    \mathcal{N}_f(\bm{X}_{nm} W_k, \bm{\sigma}_k^2)$.
+            \EndFor
+        \EndFor
+    \end{algorithmic}
+\end{algorithm}
+
+The resulting posterior distribution is:
+%
+\begin{align}
+    P(W_k, \bm{\sigma}_k^2) &\sim
+        \mathcal{N}(\mu^*, \bm{\sigma}_k^2 V_0)
+        \text{IG}(\alpha^*, \beta^*),
+\end{align}
+%
+where
+%
+\begin{flalign}
+    \bm{\mu}^* &= \left[
+        V_0^{-1} + \bm{X}_n^T \bm{X}_n
+    \right]^{-1}  \left[
+        V_0^{-1} \bm{\mu_0} + \bm{X}_n^T G_n
+    \right]  \\
+%%
+    V^* &= \left[
+        V_0^{-1} + \bm{X}_n^T \bm{X}_n
+    \right]^{-1}  \\
+%%
+    \alpha^* &= \alpha_0 + n / 2  \\
+%%
+    \beta^* &= \beta_0 + \frac{1}{2}\left(
+        G_n^2
+        + \bm{\mu_0}^T V_0^{-1} \bm{\mu_0}
+        - \bm{\mu}^{*T} V^{*-1} \bm{\mu}^*
+    \right)
+\end{flalign}
+
+Our goal is to use this model to predict grades. If the parameters $W$ and
+$\bm{\sigma}^2$ were known, the probability of the grades conditional on known
+component membership would be
+$G_n | Z_n, W, \bm{\sigma}^2 \sim \mathcal{N}(X_n W_k, I \bm{\sigma}_k^2)$.
+Since we don't know these parameters, they must be summarized through their
+posterior samples. Therefore all predictions must come from the
+\textit{posterior predictive distribution}, which is a multivariate $t$
+distribution. Given the posterior parameters $\Theta^* = (\bm{\mu^*}, V^*,
+\alpha^*, \beta^*)$, we have:
+%
+\begin{align}
+    &P(G_n | \bm{D})  \nonumber \\
+     &= \int \mathcal{N}(X_n W_k, \bm{\sigma}_k^2)
+             \text{GIG}(\Theta^*)
+             \diff W_k \diff \bm{\sigma}_k^2 \\
+     &= MVSt_{\nu^*} \left(
+            X_n \bm{\mu^*},
+            \frac{\beta^*}{\alpha^*}(I + X_n V^* X_n^T)
+        \right)
+\end{align}
+
+This works only if we know the component $Z_n = k$ with certainty. These
+latent parameters are inferred from the data. So we must also incorporate this
+uncertainty when making predictions. Given $W$ and $\bm{\sigma}_k^2$ we can
+compute an MLE of the posterior component membership weights $\bm{\pi}^*$:
+%
+\begin{align}
+    M_{nk} &= p(Z_n = k | \bm{D}_n, W, \bm{\sigma}_k^2) p(Z_n = k)    \\
+           &\propto \mathcal{N}(X_n W_k, \bm{\sigma}_k^2) \bm{\pi}_k  \\
+    \bm{\pi}_k^* &= \frac{1}{N} \sum_{n=1}^N M_{nk}
+\end{align}
+%
+With these weights, we can compute the posterior predictive with unknown
+indicator variables:
+%
+\begin{align}
+    &P(G_n | \bm{D})  \nonumber \\
+     &= \int \sum_{k=1}^K \bm{\pi}_k
+            \mathcal{N}(X_n W_k, \bm{\sigma}_k^2)
+                 \text{GIG}(\Theta^*)
+                 \diff W_k \diff \bm{\sigma}_k^2 \\
+     &= \sum_{k=1}^K \bm{\pi}_k^*
+            MVSt_{\nu^*} \left(
+                X_n \bm{\mu^*},
+                \frac{\beta^*}{\alpha^*}(I + X_n V^* X_n^T)
+        \right)
+\end{align}
+
+% Mixture of Gaussian Linear Regressions (MGLR) PGM
+\begin{figure}[tbh]
+  \setlength{\belowcaptionskip}{15pt plus 3pt minus 2pt}
+  \centering
+  \caption{Finite Mixture of Guassian Linear Regressions. The hyper-parameters
+           $\Theta = (\mu_0, V, \alpha_0, \beta_0)$. }
+  \label{fig:mglr-pgm}
+  \scalebox{0.9}{
+  \begin{tikzpicture}
+
+    % Define nodes
+    \node[obs]                                (X) {$\bm{X}_{nm}$};
+    \node[latent, right=of X]                 (G) {$G_{nm}$};
+    \node[latent, above=of X]                 (Z) {$Z_n$};
+    \node[latent, above=of Z]                (pi) {$\bm{\pi}_k$};
+    \node[latent, above=of pi]            (alpha) {$\alpha$};
+    \node[latent, right=of alpha, xshift=0.1cm] (theta) {$\Theta$};
+
+    \node[latent, below=of theta, xshift=-0.6cm] (mk) {$\bm{w}_k$};
+    \node[latent, below=of theta, xshift=0.6cm]  (sk) {$\bm{\sigma}_k^2$};
+
+    % Connect the nodes
+    \edge {Z,X,mk,sk} {G};
+    \edge {pi} {Z};
+    \edge {alpha} {pi};
+    \edge {theta} {mk,sk};
+
+    % Plates
+    \plate {course} {(X)(G)} {$M$};
+    \plate {student}%
+           {(Z)(X)(G)(course.south east)(course.north east)(course.north west)}%
+           {$N$};
+    \plate {comps} {(pi)(mk)(sk)} {$K$};
+
+  \end{tikzpicture}}
+\end{figure}
+
+With the MGLR model, we can predict student grades using linear relationships
+with the covariates. We also obtain a probabilistic clustering of students.
+Analysis of learned parameters for each regression component combined with
+these clusterings can yield useful insights about the students. However, we
+still face a significant limitation with MGLR: the real-valued grades $G_{nm}$
+are not observed. This is the case for our data and data recorded in most
+traditional university settings. What we have instead are the ordinal values
+$Y$ that result from thresholding $G$. We incorporate this process into our
+model using fixed cuttofs $\bm{\gamma}$ for thresholding:
 %
 \begin{align}
     Y_{nm} &= l \text{ iff } \bm{\gamma}_l \ge G_{nm} < \bm{\gamma}_{l+1}, \\
@@ -229,92 +546,116 @@ learning. We choose a cutoff scheme common in undergraduate curriculums:
 \begin{align}
     \bm{\gamma} = \{ 60, 70, 73, 77, 80, 83, 87, 90, 93, 100, \infty \}.
 \end{align}
+%
+We call this variation of the model MGLR for Ordinal data (MGLRO). SAY MORE
+ABOUT THIS HERE: how does it change the likelihood? How does it change the
+sampling procedure?
 
-We assume there are latent clusters of students, such that each student belongs
-to one cluster. We model these latent memberships with indicator variables
-$Z_n = k$ drawn from a multinomial with parameter $\pi$. We place a Dirichlet
-distribution on $\pi$ with parameter $\alpha$. The distribution of grades within
-a cluster is modeled using a Gaussian linear regression. So for each cluster, we
-have regression coefficients $\beta_k$ and covariance matrix $\Sigma_k$.
-Students have varying levels of competency and courses have varying difficulty.
-So we offset the regression by student- and course-specific univariate Gaussian
-bias terms $s_n$ and $c_m$. We place a conjugate Guassian Inverse-Wishart (GIW)
-prior on $\beta_k$ and $\Sigma_k$.
+\subsection{Extensions}
+
+At this point we have a model for the ordinal grades we observe and
+wish to predict. Two further modifications extend this model to introduce bias
+terms and generalize from a finite to an infinite mixture. First we introduce
+student- and course-specific bias terms $\bm{b^{(s)}} \in \mathbb{R}^n,
+\bm{b^{(c)}} \in \mathbb{R}^m$ \footnote{We use the superscripted notation for
+ease of notation when referring to bias terms since they are modeled
+identically for courses and students. We also anticipate future models that
+would incorporate additional bias terms for additional entities.}.
+These terms capture two intuitive notions. Some students generally perform
+better or worse than average, and some courses are generally harder or easier
+than average. We model these as univariate Gaussians with GIG priors:
 %
 \begin{align}
-    \pi &\sim \text{Dirichlet}\left(
-        \frac{\alpha}{K}, ..., \frac{\alpha}{K}
-    \right)  \\
-    Z_n | \pi &\sim \text{Mult}\left(
-        \pi_1, ..., \pi_k
-    \right)  \\
-    \Sigma_k &\sim IW\left(
-        \nu_0, S_0
-    \right)  \\
-    \beta_k &\sim \mathcal{N}\left(
-        \beta_0, \frac{1}{\kappa_0} \Sigma_k
-    \right)  \\
-    s_n &\sim \mathcal{N}\left(
-        \mu_s, \sigma_s^2
-    \right)  \\
-    c_m &\sim \mathcal{N}\left(
-        \mu_c, \sigma_c^2
-    \right)  \\
-    G_{nm} | Z_n, X_{mn} &\sim \mathcal{N}\left(
-        \beta_k X_{nm}^T + s_n + c_m, \Sigma_k
-    \right)
+    \bm{b^{(i)}} &\sim \mathcal{N}(\mu_i, \sigma_i^2)  \\
+    \mu_i, \sigma_i &\sim \text{GIG}(\Theta_i)
+\end{align}
+%
+where $i \in \{s, c\}$ and $\Theta_i = (\mu_{i_0}, \kappa_{i_0}, \alpha_{i_0},
+\beta_{i_0})$. Next we modify the model to include these bias terms as additive
+factors in the regression equation:
+%
+\begin{align}
+    &G_n =
+    \begin{cases}
+        E[G_n | Z_n = 1] + \epsilon_1  &  \text{with probability } \bm{\pi}_1  \\
+        E[G_n | Z_n = 2] + \epsilon_2  &  \text{with probability } \bm{\pi}_2  \\
+        ...                            &                                       \\
+        E[G_n | Z_n = k] + \epsilon_k  &  \text{with probability } \bm{\pi}_k
+    \end{cases}  \\
+    &E[G_n | Z_n = k] = \bm{X}_n W_k + \bm{b^{(s)}}_n + \bm{b^{(c)}}
+\end{align}
+%
+So the likelihood for a student's grades $G_n$ is:
+%
+\begin{align}
+    p(G_n | Z_n = k) &=
+        \mathcal{N}(
+            \bm{X}_n W_k + \bm{b^{(s)}}_n + \bm{b^{(c)}}, I \bm{\sigma}_k^2)  \\
+    p(G_n) &= \sum_{k=1}^K \bm{\pi}_k p(G_n | Z_n = k)
 \end{align}
 
 
 % Finite model
-\begin{figure}[th!]
+% Mixture of Gaussian Linear Regressions (MGLR) PGM
+\begin{figure}[tbh]
+  \setlength{\belowcaptionskip}{15pt plus 3pt minus 2pt}
   \centering
+  \caption{Finite Biased Mixture of Guassian Linear Regressions. The
+           hyper-parameters $\Theta = (\mu_0, V, \alpha_0, \beta_0)$. }
+  \label{fig:mglr-pgm}
+  \resizebox{0.9\columnwidth}{!}{
   \begin{tikzpicture}
 
     % Define nodes
-    \node[obs]                                (Y) {$Y_{nm}$};
-    \node[latent, above=of Y]                 (G) {$G_{nm}$};
-    \node[latent, above=of G, xshift=-1cm]    (Z) {$Z_{nm}$};
-    \node[obs, above=of G, xshift=1cm]        (X) {$X_{nm}$};
+    \node[latent]                             (G) {$G_{nm}$};
+    \node[obs, below=of G]                    (Y) {$Y_{nm}$};
+    \node[obs, above=of G, xshift=1cm]                    (X) {$\bm{X}_{nm}$};
+    \node[latent, above=of G, xshift=-1.6cm]    (Z) {$Z_n$};
 
-    \node[latent, left=of G, xshift=-0.6cm]   (s) {$s_n$};
-    \node[latent, left=of s]                  (ss) {$\sigma_s$};
-    \node[latent, below=of ss]                (ms) {$\mu_s$};
+    \node[latent, above=of Z]                (pi) {$\bm{\pi}_k$};
+    \node[latent, above=of pi]            (alpha) {$\alpha$};
+    \node[latent, right=of alpha] (theta) {$\Theta$};
 
-    \node[latent, right=of G, xshift=0.6cm]   (c) {$c_m$};
-    \node[latent, right=of c]                 (sc) {$\sigma_c$};
-    \node[latent, below=of sc]                (mc) {$\mu_c$};
+    \node[latent, right=of G, xshift=0.5cm]                 (bc) {$\bm{b^{(c)}}_m$};
+    \node[latent, right=of bc, xshift=-0.5cm, yshift=1cm]   (sc) {$\sigma_c^2$};
+    \node[latent, right=of bc, xshift=-0.5cm, yshift=-1cm]  (mc) {$\mu_c$};
+    \node[latent, right=of bc, xshift=0.5cm]            (thetac) {$\Theta_s$};
 
-    \node[latent, above=of Z, xshift=-1cm]    (pi) {$\pi_k$};
-    \node[latent, above=of pi]             (alpha) {$\alpha$};
-    \node[latent, right=of alpha, xshift=0.2cm]  (theta) {$\Theta$};
+    \node[latent, left=of G]                                (bs) {$\bm{b^{(s)}}_n$};
+    \node[latent, left=of bs, xshift=0.5cm, yshift=1cm]     (ss) {$\sigma_s^2$};
+    \node[latent, left=of bs, xshift=0.5cm, yshift=-1cm]    (ms) {$\mu_s$};
+    \node[latent, left=of bs, xshift=-0.5cm]            (thetas) {$\Theta_s$};
 
-    \node[latent, below=of theta, xshift=-0.6cm] (beta) {$\beta_k$};
-    \node[latent, below=of theta, xshift=0.6cm]  (sk) {$\Sigma_k$};
+    \node[latent, below=of theta, xshift=-0.6cm] (mk) {$\bm{w}_k$};
+    \node[latent, below=of theta, xshift=0.6cm]  (sk) {$\bm{\sigma}_k^2$};
 
     % Connect the nodes
+    \edge {Z,X,mk,sk} {G};
     \edge {G} {Y};
-    \edge {s,c,Z,X,beta,sk} {G};
-    \edge {ss,ms} {s};
-    \edge {ss} {ms};
-    \edge {sc,mc} {c};
-    \edge {sc} {mc};
-
     \edge {pi} {Z};
-    \edge {sk} {beta};
     \edge {alpha} {pi};
-    \edge {theta} {beta,sk};
+
+    \edge {sk} {mk};
+    \edge {theta} {mk,sk};
+
+    \edge {thetac} {sc,mc};
+    \edge {sc} {mc};
+    \edge {sc,mc} {bc};
+    \edge {bc} {G};
+
+    \edge {thetas} {ss,ms};
+    \edge {ss} {ms};
+    \edge {ss,ms} {bs};
+    \edge {bs} {G};
 
     % Plates
-    \plate {student} {(s)(Z)(X)(G)(Y)} {$N$};
-    \plate {course} {(c)(Z)(X)(G)(Y)(student.south east)(student.north east)} {$M$};
-    \plate {comps} {(pi)(beta)(sk)} {$K$};
+    \plate {student} {(Z)(X)(G)(Y)(bs)} {$N$};
+    \plate {course}%
+           {(X)(G)(Y)(bc)(student.south east)}%
+           {$M$};
+    \plate {comps} {(pi)(mk)(sk)} {$K$};
 
-  \end{tikzpicture}
-  \vspace{2pt}
-  \caption{Finite Bayesian Mixture of Linear Regressions. The hyper-parameters
-           $\Theta = (\beta_0, \kappa_0, \nu_0, \Sigma_0)$}
-  \label{fig:finite-bpmlr}
+  \end{tikzpicture}}
 \end{figure}
 
 This model shares the problem of all finite mixture models: how do we select the
@@ -335,8 +676,13 @@ parameter $\alpha$ and base distribution $H_0$. So we replace (4-7) above with:
 
 
 % Infinite model.
-\begin{figure}[th!]
+\begin{figure}[tbh]
   \centering
+  \setlength{\belowcaptionskip}{15pt plus 3pt minus 2pt}
+  \caption{Infinite Bayesian Mixture of Linear Regressions. The hyper-parameters
+           $\Theta = (\beta_0, \kappa_0, \nu_0, \Sigma_0)$}
+  \label{fig:infinite-bpmlr}
+  \resizebox{0.9\columnwidth}{!}{
   \begin{tikzpicture}
 
     % Define nodes
@@ -383,14 +729,15 @@ parameter $\alpha$ and base distribution $H_0$. So we replace (4-7) above with:
     \plate {course} {(c)(Z)(X)(G)(Y)(student.south east)(student.north east)} {$M$};
     \plate {comps} {(pi)(beta)(sk)} {$\infty$};
 
-  \end{tikzpicture}
-  \vspace{2pt}
-  \caption{Infinite Bayesian Mixture of Linear Regressions. The hyper-parameters
-           $\Theta = (\beta_0, \kappa_0, \nu_0, \Sigma_0)$}
-  \label{fig:infinite-bpmlr}
+  \end{tikzpicture}}
 \end{figure}
 
-
+\cite{gaffney_trajectory_1999},
+\cite{gorur_dirichlet_2010},
+\cite{kamper_gibbs_2013},
+\cite{kottas_nonparametric_2005},
+\cite{neal_markov_2000},
+\cite{rasmussen_infinite_1999}
 
 \section{Experiments}\label{experiments}
 
@@ -407,7 +754,7 @@ This research was funded by NSF IIS grant 1447489.
 
 
 \bibliographystyle{siam}
-\bibliography{refs}
+\bibliography{dpmlr-refs}
 
 \end{document}
 
