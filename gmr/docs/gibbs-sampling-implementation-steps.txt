@@ -1,0 +1,15 @@
+1.  Identify all conditional distributions
+2.  Determine if each is conjugate
+3.  Identify update rules for each
+4.  If collapsing, identify collapsed conditional distributions and identify
+    update rules for those
+5.  Write out sampling procedure as an algorithm.
+6.  Generate synthetic data using the generative process from the model.
+7.  Implement the algorithm and verify that it recovers the parameters used in
+    synthetic data generation. Revise if necessary.
+8.  Test on real data.
+9.  Interpret the results.
+10. Identify assumptions made in the model. Look at each distribution and each
+    parent-child relationship in the graphical model.
+11. Determine if the assumptions are realistic. Revise model if they're not.
+12. Report on the results.
