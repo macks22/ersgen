@@ -542,24 +542,32 @@ still face a significant limitation with MGLR: the real-valued grades $G_{nm}$
 are not observed. This is the case for our data and data recorded in most
 traditional university settings. What we have instead are the ordinal values
 $Y$ that result from thresholding $G$. We incorporate this process into our
-model using fixed cuttofs $\bm{\gamma}$ for thresholding:
+model using fixed cutoffs $\bm{\gamma}$ for thresholding:
 %
 \begin{align}
-    Y_{nm} &= l \text{ iff } \bm{\gamma}_l \ge G_{nm} < \bm{\gamma}_{l+1}, \\
-         l &\in \{\text{F, D, C-, C, C+, B-, B, B+, A-, A} \}.
+    Y_{nm} &= L_{i-1} \text{ iff } \bm{\gamma}_{i-1} \le G_{nm} < \bm{\gamma}_{i},
+            i = 1, ..., |L|  \\
+         L &= \{\text{F, D, C-, C, C+, B-, B, B+, A-, A} \},  \\
+    \bm{\gamma} &= \{ {-}\infty, 60, 70, 73, 77, 80, 83, 87, 90, 93, \infty \}.
 \end{align}
 %
 The actual choice of cutoffs $\bm{\gamma}$ is unimportant; the model will adjust
 the distribution of $G_{nm}$ across the thresholded space appropriately during
-learning. We choose a cutoff scheme common in undergraduate curriculums:
+learning. We chose a cutoff scheme common in undergraduate curriculums.
+We call this variation of the model MGLR for Ordinal data (MGLRO). The
+full conditional distribution of $G_{nm}$ is:
 %
 \begin{align}
-    \bm{\gamma} = \{ 60, 70, 73, 77, 80, 83, 87, 90, 93, 100, \infty \}.
+    p(G_n &| Z_n = k, W_k, \bm{\sigma}_k^2) =  \\
+        &\mathcal{N}(\bm{X}_n W_k, \bm{\sigma}_k^2)
+        \prod_{m=1}^M I\{\bm{\gamma}_{i-1} \le G_{nm} < \bm{\gamma}_{i}\}
 \end{align}
-%
-We call this variation of the model MGLR for Ordinal data (MGLRO). SAY MORE
-ABOUT THIS HERE: how does it change the likelihood? How does it change the
-sampling procedure?
+
+We can update the grades $G_n$ with this cutoff scheme by drawing each of its
+coordinates conditional on the rest. For our model, this means drawing the
+grade for each course conditional on the other course grades. As in
+\cite{kottas_nonparametric_2005}, we truncate these conditional univariate
+Gaussians to the interval $\{\bm{\gamma}_{i-1}, \bm{\gamma}_i\}$.
 
 \subsection{Extensions}
 
@@ -715,7 +723,40 @@ parameter $\alpha$ and base distribution $H_0$.
     \right) \times \text{IG}(\alpha_0, \beta_0) \\
     W_k, \sigma_k^2 &\sim H
 \end{align}
+%
+We formulate a generative process incorporating the DP prior using the Chinese
+Restaurant Process (CRP). This process is laid out in
+Algorithm~\ref{alg:b-imglro-genp} and the graphical model is shown in
+Figure~\ref{fig:b-mglro-pgm}.
 
+\begin{algorithm}
+    \caption{b-IMGLRO Generative Process}
+    \label{alg:b-mglro-genp}
+    \begin{algorithmic}[1]
+        \State  INSERT CRP HERE.
+        \State  Draw $\bm{\pi} \sim \text{Dir}(\alpha)$.
+        \For{$k$ in $1..K$}
+            \State  Draw $\bm{\sigma}_k^2 \sim \text{IG}(\alpha_0, \beta_0)$.
+            \State  Draw $W_k \sim
+                \mathcal{N}_f(\bm{\mu_0}, V_0 \bm{\sigma}_k^2)$.
+        \EndFor
+        \For{$m = 1..M$}
+            \State  Draw $\bias{c}_m \sim
+                \mathcal{N}(\mu_c, \sigma_c)$.
+        \EndFor
+        \For{$n$ in $1..N$}
+            \State  Draw  $Z_n \sim \text{Mult}(\bm{\pi}_1, ..., \bm{\pi}_k)$.
+            \State  Draw  $\bias{s}_n \sim \mathcal{N}(\mu_s, \sigma_s)$
+            \State  Draw  $G_n \sim \mathcal{N}(
+                    \bm{X}_n W_k + \bias{s}_n + \bias{c}, \bm{\sigma}_k^2)$.
+            % \For{$m$ in random-subset($\mathbb{C}$)}
+            %     \State  Draw $G_{nm} | Z_n, \bm{X}_{nm} \sim
+            %         \mathcal{N}_f(\bm{X}_{nm} W_k + \bias{s}_n + \bias{c}_m, \bm{\sigma}_k^2)$.
+            % \EndFor
+        \EndFor
+        \State  Threshold $G$ to get $Y$ using cutoffs $\bm{\gamma}$.
+    \end{algorithmic}
+\end{algorithm}
 
 % Infinite model.
 % biased Mixture of Gaussian Linear Regressions (b-MGLRO) PGM
@@ -784,6 +825,12 @@ parameter $\alpha$ and base distribution $H_0$.
   \end{tikzpicture}}
 \end{figure}
 
+\section{Experiments}\label{experiments}
+
+\section{Analysis}\label{analysis}
+
+\section{Previous work}\label{previous work}
+
 \cite{gaffney_trajectory_1999},
 \cite{gorur_dirichlet_2010},
 \cite{kamper_gibbs_2013},
@@ -791,11 +838,6 @@ parameter $\alpha$ and base distribution $H_0$.
 \cite{neal_markov_2000},
 \cite{rasmussen_infinite_1999}
 
-\section{Experiments}\label{experiments}
-
-\section{Analysis}\label{analysis}
-
-\section{Previous work}\label{previous work}
 
 \section{Conclusions}\label{conclusions}
 We worked hard, and achieved very little.
