@@ -28,6 +28,23 @@ def ipr_predict(dict model,
     X = X[:, nb:]
     return w0 + B.dot(w) + (X.dot(W.T) * P).sum(axis=1)
 
+def ipr_predict_cs(dict model,
+                   object X,
+                   np.ndarray[np.long_t, ndim=1] eids,
+                   unsigned int nb):
+    """Make predictions for each feature vector in X using the IPR model.
+    This function handles cold-start predictions by using bias terms of 0 for
+    missing indices.
+    """
+    w0 = model['w0']
+    w = model['w']
+    P = model['P'][eids]
+    W = model['W']
+
+    B = X[:, :nb]
+    X = X[:, nb:]
+    return w0 + B.dot(w) + (X.dot(W.T) * P).sum(axis=1)
+
 
 def compute_errors(dict model,
                    object X,
@@ -57,6 +74,7 @@ def fit_ipr_sgd(
         np.ndarray[np.double_t, ndim=1] y,
         np.ndarray[np.long_t, ndim=1] eids,
         unsigned int nb,
+        unsigned int b1,
         unsigned int k=3,
         double lrate=0.001,
         double lambda_w=0.01,
@@ -68,15 +86,15 @@ def fit_ipr_sgd(
         unsigned int verbose=0,
         object dtype=np.float64):
 
-    cdef unsigned int b1, n, nf, p
+    cdef unsigned int n, nf, p
     cdef np.ndarray[np.long_t, ndim=1] indices
     cdef np.ndarray[np.double_t, ndim=1] w, Pi_zeros
-    cdef np.ndarray[np.double_t, ndim=2] P, W, W_zeros
+    cdef np.ndarray[np.double_t, ndim=2] P, W
     cdef double rmse, prev_rmse, start, elapsed, w0
     cdef dict model
 
     # Get value counts for parameter initialization.
-    b1 = np.unique(eids).shape[0]  # num unique values for entity to profile
+    # b1 = np.unique(eids).shape[0]  # num unique values for entity to profile
     n, nf = X.shape  # num training examples and num features
     p = nf - nb  # num non-entity predictor variables
 
@@ -88,7 +106,6 @@ def fit_ipr_sgd(
 
     # init zero vectors for non-negative constrained optimization.
     Pi_zeros = np.zeros(k).astype(dtype)
-    W_zeros = np.zeros((k, p)).astype(dtype)
 
     model = {
         'w0': w0,
@@ -111,8 +128,10 @@ def fit_ipr_sgd(
     indices = np.arange(n)
 
     cdef np.ndarray[object, ndim=1] Brows, Xrows
-    cdef np.ndarray[np.uint32_t, ndim=2] Bidx, Xidx, Bdata
-    cdef np.ndarray[np.double_t, ndim=2] Xdata
+    cdef np.ndarray[np.uint32_t, ndim=2] Bidx, Bdata#, Xidx
+    #cdef np.ndarray[np.double_t, ndim=2] Xdata
+    cdef list Xidx, Xdata
+    cdef object row
 
     logging.info('warming up cache for sparse row indexing')
     logging.info('caching bias features')
@@ -122,8 +141,10 @@ def fit_ipr_sgd(
 
     logging.info('caching non-bias features')
     Xrows = np.array([X_[i] for i in indices])
-    Xidx = np.array([row.indices for row in Xrows]).astype(np.uint32)
-    Xdata = np.array([row.data for row in Xrows])
+    # Xidx = np.array(Xidx_list).astype(np.uint32)
+    # Xdata = np.array([row.data for row in Xrows])
+    Xidx = [row.indices.astype(np.uint32) for row in Xrows]
+    Xdata = [row.data for row in Xrows]
 
     cdef object B_t
     cdef np.ndarray[np.double_t, ndim=1] reg, w_t, X_dat
@@ -161,17 +182,17 @@ def fit_ipr_sgd(
             y_hat = w0 + B_dat.dot(w_t) + P_i.dot(reg)
             e_t = y_hat - y[t]
             if nn:
-                w0 = np.maximum(0, w0 * lrate * e_t)
+                w0 = np.maximum(0, w0 - lrate * e_t)
                 w[B_idx] = np.maximum(
                     np.zeros(B_t.nnz), w_t - lrate * e_t * B_dat)
                 P[i] = np.maximum(
                     Pi_zeros,
                     P_i - lrate * (e_t * reg + lambda_w * P_i))
-                W = np.maximum(
-                    W_zeros,
-                    lrate * (
-                        e_t * P_i[:, np.newaxis].dot(X_dat[np.newaxis, :]
-                        + lambda_w * W_t)))
+                W[:, X_idx] = np.maximum(
+                    np.zeros(len(X_idx)),
+                    W_t - lrate * (
+                        e_t * P_i[:, np.newaxis].dot(X_dat[np.newaxis, :])
+                        + lambda_w * W_t))
             else:
                 w0 = w0 - lrate * e_t
                 w[B_idx] = w_t - lrate * e_t * B_dat

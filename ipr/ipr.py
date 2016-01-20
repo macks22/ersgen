@@ -99,8 +99,8 @@ def read_feature_guide(fname):
         raise BadFeatureConfig('no entity variables given; need at least 1')
 
     num_features = len(vars['c']) + len(vars['r'])
-    if not num_features > 0:
-        raise BadFeatureConfig('no predictors specified')
+    # if not num_features > 0:
+    #     raise BadFeatureConfig('no predictors specified')
 
     spec = (vars['t'][0], vars['e'], vars['c'], vars['r'])
     target, ents, cats, reals = spec
@@ -208,15 +208,19 @@ def preprocess(train, test, target, ents, cats, reals):
     test_y = test[target].values
 
     # Read out id lists for primary entity.
-    id_map = map_ids(train, ents[0])
+    all_dat = pd.concat((train, test))
+    id_map = map_ids(all_dat, ents[0])
+
+    map_ids(train, ents[0], id_map)
     map_ids(test, ents[0], id_map)
     train_eids = train[ents[0]].values
     test_eids = test[ents[0]].values
 
     # Z-score scaling of real-valued features.
-    scaler = preprocessing.StandardScaler()
-    train_reals = scaler.fit_transform(train[reals])
-    test_reals = scaler.transform(test[reals])
+    if reals:
+        scaler = preprocessing.StandardScaler()
+        train_reals = scaler.fit_transform(train[reals])
+        test_reals = scaler.transform(test[reals])
 
     # One-hot encoding of entity and categorical features.
     catf = ents + cats
@@ -228,7 +232,7 @@ def preprocess(train, test, target, ents, cats, reals):
 
     # Create a feature map for decoding one-hot encoding.
     ncats = encoder.active_features_.shape[0]
-    nreal = train_reals.shape[1]
+    nreal = train_reals.shape[1] if reals else 0
     nf = ncats + nreal
 
     # Count entities.
@@ -261,8 +265,13 @@ def preprocess(train, test, target, ents, cats, reals):
     logging.info('number of real-valued features: %d' % nreal)
 
     # Put all features together.
-    train_X = sp.sparse.hstack((train_cats, train_reals))
-    test_X = sp.sparse.hstack((test_cats, test_reals))
+    if reals:
+        train_X = sp.sparse.hstack((train_cats, train_reals))
+        test_X = sp.sparse.hstack((test_cats, test_reals))
+    else:
+        train_X = train_cats
+        test_X = test_cats
+
     logging.info('Total of %d features after encoding' % nf)
 
     return (train_eids, train_X, train_y,
@@ -304,7 +313,7 @@ class Model(object):
         if fguide:
             self.read_fguide(fguide)
         else:
-            check_fguide()
+            self.check_fguide()
 
     def preprocess(self, train, test, fguidef=''):
         self.read_necessary_fguide(fguidef)
@@ -386,9 +395,9 @@ class IPR(Model):
     def W(self):
         return self.model['W']
 
-    def fit(self, X, y, eids, nb):
+    def fit(self, X, y, eids, nb, b1):
         self.model = fit_ipr_sgd(
-            X, y, eids, nb,
+            X, y, eids, nb, b1,
             k=self.nmodels,
             lambda_w=self.lambda_w,
             lambda_b=self.lambda_b,
@@ -502,6 +511,8 @@ class IPR(Model):
 
 def plot_imp(I, colname="Importance"):
     """Plot overall feature importance."""
+    I = I.sort(colname, ascending=False)
+
     sns.plt.figure()
     deep_blue = sns.color_palette('colorblind')[0]
     ax = sns.barplot(data=I, x=colname, y=I.index, color=deep_blue)
@@ -511,10 +522,20 @@ def plot_imp(I, colname="Importance"):
     ax.figure.show()
     return ax
 
-def plot_pprof_imp(I_pprof, colname="Importance", sortby="Feature"):
+def plot_pprof_imp(I_pprof, colname="Importance", sortby="Feature",
+                   mname='Model'):
     """Plot per-profile feature importance."""
+    # transform pprof imp so the imp numbers are normalized per model.
+    I = I_pprof.copy()
+    for mnum in I[mname]:
+        vals = I.loc[I[mname] == mnum, colname]
+        total = vals.sum()
+        I.loc[I[mname] == mnum, colname] = vals / total
+
+    I = I.sort([colname, sortby], ascending=False)
+
     sns.plt.figure()
-    ax = sns.barplot(data=I_pprof, x=colname, y=sortby, hue='Model')
+    ax = sns.barplot(data=I, x=colname, y=sortby, hue='Model')
     ax.set(title='Feature Importance Per Model', xlabel=colname)
     ax.figure.show()
     return ax
@@ -635,7 +656,8 @@ if __name__ == "__main__":
                 epsilon=args.epsilon)
 
     # Train IPR model.
-    model.fit(X, y, eids, nb)
+    b1 = np.union1d(eids, train_eids).unique().shape[0]
+    model.fit(X, y, eids, nb, b1)
 
 
     # Make predictions and evaluate in terms of RMSE.
