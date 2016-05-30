@@ -332,7 +332,6 @@ class Model(object):
         self.model = load_model_vars(savedir)
 
 
-
 class IPR(Model):
     """Individualized Profile Regression model."""
 
@@ -360,6 +359,19 @@ class IPR(Model):
 
         # all model params initially set to None
         self.model = {attr: None for attr in self.param_names}
+
+    def get_params(self):
+        return {
+            'nmodels': self.nmodels,
+            'lambda_w': self.lambda_w,
+            'lambda_b': self.lambda_b,
+            'iters': self.iters,
+            'lrate': self.lrate,
+            'epsilon': self.epsilon,
+            'init_std': self.init_std,
+            'nonneg': self.nonneg,
+            'verbose': self.verbose
+        }
 
     @property
     def args_suffix(self):
@@ -407,6 +419,11 @@ class IPR(Model):
             verbose=self.verbose,
             lrate=self.lrate,
             eps=self.epsilon)
+
+        self.w0_ = self.model['w0']
+        self.w_ = self.model['w']
+        self.W_ = self.model['W']
+        self.P_ = self.model['P']
 
     def predict(self, X, eids, nb):
         self.check_if_learned()
